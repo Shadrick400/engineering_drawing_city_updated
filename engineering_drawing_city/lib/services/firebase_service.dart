@@ -918,18 +918,31 @@ class FirestoreService {
   }
 
   Stream<List<BookModel>> getBooks() {
-    // This is a broadcast controller, so a widget that subscribes after the
-    // first Firestore snapshot would otherwise miss that initial list forever.
-    // Send the current cache to every new subscriber, then forward live updates.
-    return Stream<List<BookModel>>.multi((controller) {
-      controller.add(getBooksSync());
-      final subscription = _booksController.stream.listen(
-        controller.add,
-        onError: (Object error, StackTrace stackTrace) {
-          controller.addError(error, stackTrace);
-        },
+    // Read the collection directly so every Books tab receives Firestore's
+    // initial snapshot, even if it opens after the app's other listeners.
+    // Firestore security rules still enforce admin/subscriber access.
+    return _db.collection('books').snapshots().map((snapshot) {
+      final ids = snapshot.docs.map((doc) => doc.id).toSet();
+      _books.removeWhere(
+        (id, _) => _remoteBookIds.contains(id) && !ids.contains(id),
       );
-      controller.onCancel = () => subscription.cancel();
+      _remoteBookIds
+        ..clear()
+        ..addAll(ids);
+
+      for (final document in snapshot.docs) {
+        try {
+          _books[document.id] =
+              BookModel.fromMap(document.id, document.data());
+        } catch (error, stackTrace) {
+          debugPrint('Unable to parse book ${document.id}: $error');
+          debugPrintStack(stackTrace: stackTrace);
+        }
+      }
+
+      final books = getBooksSync();
+      _booksController.add(books);
+      return books;
     });
   }
 
