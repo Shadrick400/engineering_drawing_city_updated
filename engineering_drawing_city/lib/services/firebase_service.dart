@@ -638,7 +638,12 @@ class FirestoreService {
           ..clear()
           ..addAll(ids);
         for (final doc in snapshot.docs) {
-          _videos[doc.id] = VideoModel.fromMap(doc.id, doc.data());
+          try {
+            _videos[doc.id] = VideoModel.fromMap(doc.id, doc.data());
+          } catch (error, stackTrace) {
+            debugPrint('Unable to parse video ${doc.id}: $error');
+            debugPrintStack(stackTrace: stackTrace);
+          }
         }
         _videosController.add(getVideosSync());
       }, onError: (Object error, StackTrace stackTrace) {
