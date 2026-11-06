@@ -1,3 +1,12 @@
+DateTime _readFirestoreDate(dynamic value) {
+  if (value is Timestamp) return value.toDate();
+  if (value is DateTime) return value;
+  if (value is String) return DateTime.tryParse(value) ?? DateTime.now();
+  return DateTime.now();
+}
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 /// Represents a reference book or study material available to students.
 class BookModel {
   final String id;
