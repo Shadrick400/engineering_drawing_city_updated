@@ -753,10 +753,23 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
 
   // ══════════════════════ BOOKS TAB ══════════════════════
   Widget _buildBooksTab() {
-    final books = _firestoreService.getBooksSync();
-    final courses = _firestoreService.getCoursesSync();
+    return StreamBuilder<List<BookModel>>(
+      stream: _firestoreService.getBooks(),
+      initialData: _firestoreService.getBooksSync(),
+      builder: (context, snapshot) {
+        final books = snapshot.data ?? const <BookModel>[];
+        final courses = _firestoreService.getCoursesSync();
 
-    return SingleChildScrollView(
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text('Unable to load books: ${snapshot.error}'),
+            ),
+          );
+        }
+
+        return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Center(
         child: ConstrainedBox(
@@ -844,16 +857,32 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
             ],
           ),
         ),
-      ),
+        ),
+      );
+      },
     );
   }
 
   // ══════════════════════ PAST PAPERS TAB ══════════════════════
   Widget _buildPastPapersTab() {
-    final papers = _firestoreService.getPastPapersSync();
-    final years = _firestoreService.getAvailablePastPaperYears();
+    return StreamBuilder<List<PastPaperModel>>(
+      stream: _firestoreService.getPastPapers(),
+      initialData: _firestoreService.getPastPapersSync(),
+      builder: (context, snapshot) {
+        final papers = snapshot.data ?? const <PastPaperModel>[];
+        final years = papers.map((paper) => paper.year).toSet().toList()
+          ..sort((a, b) => b.compareTo(a));
 
-    return SingleChildScrollView(
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text('Unable to load past papers: ${snapshot.error}'),
+            ),
+          );
+        }
+
+        return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Center(
         child: ConstrainedBox(
@@ -922,7 +951,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
             ],
           ),
         ),
-      ),
+        ),
+      );
+      },
     );
   }
 
