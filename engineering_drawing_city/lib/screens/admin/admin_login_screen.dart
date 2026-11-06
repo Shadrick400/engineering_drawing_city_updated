@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 
@@ -221,15 +223,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
   late TabController _tabController;
   final FirestoreService _firestoreService = FirestoreService();
   final AuthService _authService = AuthService();
+  StreamSubscription? _usersChangesSubscription;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 8, vsync: this);
+    _usersChangesSubscription = _authService.usersStream.listen((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
+    _usersChangesSubscription?.cancel();
     _tabController.dispose();
     super.dispose();
   }
