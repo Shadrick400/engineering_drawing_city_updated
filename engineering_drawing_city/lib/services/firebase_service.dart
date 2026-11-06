@@ -32,6 +32,17 @@ class AuthService {
   bool get isAdmin => _currentUser?.role == 'admin';
 
   final Map<String, UserModel> _usersDb = {};
+  final StreamController<List<UserModel>> _usersStreamController =
+      StreamController<List<UserModel>>.broadcast();
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _usersSubscription;
+
+  Stream<List<UserModel>> get usersStream => _usersStreamController.stream;
+
+  void _emitUsers() {
+    if (!_usersStreamController.isClosed) {
+      _usersStreamController.add(getAllUsers());
+    }
+  }
   void setCurrentUser(UserModel? user) {
     _currentUser = user;
     if (user != null) {
@@ -39,6 +50,7 @@ class AuthService {
       _usersDb[user.email.toLowerCase()] = user;
     }
     _userStreamController.add(_currentUser);
+    _emitUsers();
   }
 
 Future<UserModel> signInWithEmailPassword({
@@ -441,15 +453,19 @@ Future<void> sendPasswordResetEmail(String email) async {
 
   /// Reactivate / Activate a suspended account (admin action)
   Future<void> reactivateAccount(String uid) async {
-    final user = _usersDb[uid];
-    if (user == null) return;
+    final userRef = FirebaseFirestore.instance.collection('users').doc(uid);
+    final snapshot = await userRef.get();
+    if (!snapshot.exists || snapshot.data() == null) {
+      throw Exception('The student account could not be found in Firebase.');
+    }
 
+    final user = UserModel.fromMap(uid, snapshot.data()!);
     final reactivated = user.copyWith(
       isSuspended: false,
       clearSuspensionReason: true,
       updatedAt: DateTime.now(),
     );
-    await FirebaseFirestore.instance.collection('users').doc(uid).update({
+    await userRef.update({
       'isSuspended': false,
       'suspensionReason': FieldValue.delete(),
       'suspendedAt': FieldValue.delete(),
@@ -459,6 +475,7 @@ Future<void> sendPasswordResetEmail(String email) async {
     _usersDb[reactivated.email.toLowerCase()] = reactivated;
     if (_currentUser?.uid == uid) _currentUser = reactivated;
     _userStreamController.add(_currentUser);
+    _emitUsers();
   }
 
   /// Activate suspended user (alias for reactivateAccount)
@@ -466,9 +483,13 @@ Future<void> sendPasswordResetEmail(String email) async {
 
   /// Suspend a user account for Terms & Conditions breach (admin action)
   Future<void> suspendUser(String uid, {required String reason}) async {
-    final user = _usersDb[uid];
-    if (user == null) return;
+    final userRef = FirebaseFirestore.instance.collection('users').doc(uid);
+    final snapshot = await userRef.get();
+    if (!snapshot.exists || snapshot.data() == null) {
+      throw Exception('The student account could not be found in Firebase.');
+    }
 
+    final user = UserModel.fromMap(uid, snapshot.data()!);
     final now = DateTime.now();
     final suspended = user.copyWith(
       isSuspended: true,
@@ -476,7 +497,7 @@ Future<void> sendPasswordResetEmail(String email) async {
       suspendedAt: now,
       updatedAt: now,
     );
-    await FirebaseFirestore.instance.collection('users').doc(uid).update({
+    await userRef.update({
       'isSuspended': true,
       'suspensionReason': reason,
       'suspendedAt': now,
@@ -486,6 +507,7 @@ Future<void> sendPasswordResetEmail(String email) async {
     _usersDb[suspended.email.toLowerCase()] = suspended;
     if (_currentUser?.uid == uid) _currentUser = suspended;
     _userStreamController.add(_currentUser);
+    _emitUsers();
   }
 
   Future<void> signOut() async {
@@ -507,18 +529,34 @@ Future<void> sendPasswordResetEmail(String email) async {
   /// Load real student and administrator profiles from Firestore.
   /// This replaces the old in-memory demo accounts.
   Future<void> loadAllUsers() async {
-    final snapshot = await FirebaseFirestore.instance.collection('users').get();
+    final usersCollection = FirebaseFirestore.instance.collection('users');
+    final snapshot = await usersCollection.get();
+    _replaceCachedUsers(snapshot.docs);
+
+    // Keep the admin account list synchronized with Firebase changes made
+    // from another device or session.
+    _usersSubscription ??= usersCollection.snapshots().listen(
+      (liveSnapshot) => _replaceCachedUsers(liveSnapshot.docs),
+      onError: (Object error) {
+        debugPrint('Could not watch Firebase users: $error');
+      },
+    );
+  }
+
+  void _replaceCachedUsers(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> documents,
+  ) {
     _usersDb.clear();
-    for (final document in snapshot.docs) {
+    for (final document in documents) {
       final user = UserModel.fromMap(document.id, document.data());
       _usersDb[user.uid] = user;
       _usersDb[user.email.toLowerCase()] = user;
+      if (_currentUser?.uid == user.uid) {
+        _currentUser = user;
+      }
     }
-    final current = _currentUser;
-    if (current != null) {
-      _usersDb[current.uid] = current;
-      _usersDb[current.email.toLowerCase()] = current;
-    }
+    _emitUsers();
+    _userStreamController.add(_currentUser);
   }
 
   /// Get all users (for admin)
