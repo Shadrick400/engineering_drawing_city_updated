@@ -1,3 +1,12 @@
+DateTime _readFirestoreDate(dynamic value) {
+  if (value is Timestamp) return value.toDate();
+  if (value is DateTime) return value;
+  if (value is String) return DateTime.tryParse(value) ?? DateTime.now();
+  return DateTime.now();
+}
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 /// Represents a past paper (Test 1, Test 2, or Sessional Exam) for a given academic year.
 class PastPaperModel {
   final String id;
