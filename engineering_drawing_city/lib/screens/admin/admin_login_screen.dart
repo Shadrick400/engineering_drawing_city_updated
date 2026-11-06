@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 
 import 'package:engineering_drawing_city/models/app_settings_model.dart';
@@ -9,6 +10,7 @@ import 'package:engineering_drawing_city/models/course_model.dart';
 import 'package:engineering_drawing_city/models/past_paper_model.dart';
 import 'package:engineering_drawing_city/models/payment_model.dart';
 import 'package:engineering_drawing_city/models/video_model.dart';
+import 'package:engineering_drawing_city/models/user_model.dart';
 import 'package:engineering_drawing_city/services/firebase_service.dart';
 import 'package:engineering_drawing_city/theme/app_theme.dart';
 
@@ -1056,7 +1058,38 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
   }
 
   Widget _buildUsersTab() {
-    final allUsers = _authService.getAllUsers().where((u) => u.role != 'admin').toList();
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      // Read the live Firebase users collection directly. This makes the
+      // dashboard independent of the AuthService in-memory cache.
+      stream: FirebaseFirestore.instance.collection('users').snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                'Unable to load users from Firebase. Check the admin account role and Firestore users read rules.\n\n${snapshot.error}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: AppTheme.errorRed),
+              ),
+            ),
+          );
+        }
+        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final allUsers = snapshot.data!.docs
+            .map((doc) => UserModel.fromMap(doc.id, doc.data()))
+            .where((user) => user.role != 'admin')
+            .toList()
+          ..sort((a, b) => (b.createdAt ?? DateTime(2000))
+              .compareTo(a.createdAt ?? DateTime(2000)));
+        return _buildActiveUsersList(allUsers);
+      },
+    );
+  }
+
+  Widget _buildActiveUsersList(List<UserModel> allUsers) {
     final activeUsers = allUsers.where((u) => !u.isSuspended).toList();
     final suspendedCount = allUsers.where((u) => u.isSuspended).length;
 
@@ -1250,12 +1283,38 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     );
   }
 
+  }
+
   // ══════════════════════ SUSPENDED USERS TAB ══════════════════════
   Widget _buildSuspendedUsersTab() {
-    final suspendedUsers = _authService.getAllUsers()
-        .where((u) => u.role != 'admin' && u.isSuspended)
-        .toList();
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance.collection('users').snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                'Unable to load suspended users from Firebase: ${snapshot.error}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: AppTheme.errorRed),
+              ),
+            ),
+          );
+        }
+        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final suspendedUsers = snapshot.data!.docs
+            .map((doc) => UserModel.fromMap(doc.id, doc.data()))
+            .where((user) => user.role != 'admin' && user.isSuspended)
+            .toList();
+        return _buildSuspendedUsersList(suspendedUsers);
+      },
+    );
+  }
 
+  Widget _buildSuspendedUsersList(List<UserModel> suspendedUsers) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Center(
@@ -1514,6 +1573,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
         ),
       ),
     );
+  }
+
   }
 
   /// Small info chip helper
