@@ -879,7 +879,21 @@ class FirestoreService {
     _booksController.add(_books.values.toList());
   }
 
-  Stream<List<BookModel>> getBooks() => _booksController.stream;
+  Stream<List<BookModel>> getBooks() {
+    // This is a broadcast controller, so a widget that subscribes after the
+    // first Firestore snapshot would otherwise miss that initial list forever.
+    // Send the current cache to every new subscriber, then forward live updates.
+    return Stream<List<BookModel>>.multi((controller) {
+      controller.add(getBooksSync());
+      final subscription = _booksController.stream.listen(
+        controller.add,
+        onError: (Object error, StackTrace stackTrace) {
+          controller.addError(error, stackTrace);
+        },
+      );
+      controller.onCancel = () => subscription.cancel();
+    });
+  }
 
   List<BookModel> getBooksSync() {
     return _books.values.toList();
