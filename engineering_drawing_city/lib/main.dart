@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 
 import 'package:engineering_drawing_city/firebase_options.dart';
 import 'package:engineering_drawing_city/models/course_model.dart';
-import 'package:engineering_drawing_city/models/video_model.dart';
 import 'package:engineering_drawing_city/screens/admin/admin_login_screen.dart';
 import 'package:engineering_drawing_city/screens/ai/ai_assistant_screen.dart';
 import 'package:engineering_drawing_city/screens/auth/forgot_password_screen.dart';
@@ -75,18 +74,15 @@ class _EngineeringDrawingCityAppState extends State<EngineeringDrawingCityApp>
           } else if (args is VideoModel) {
             return VideoPlayerScreen(video: args);
           }
-          return VideoPlayerScreen(
-            video: VideoModel(
-              id: 'vid_01',
-              title: 'Drafting Instruments & Drawing Sheet Setup',
-              description: 'Complete breakdown of drafting instruments and standard layout.',
-              youtubeVideoId: 'WkL3SfvWz1U',
-              thumbnailUrl: '',
-              courseId: 'course_01',
-              order: 1,
-              isPublished: true,
-              createdAt: DateTime.now(),
-              updatedAt: DateTime.now(),
+          return const Scaffold(
+            body: Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text(
+                  'No video lesson was selected. Please choose a published lesson from Courses.',
+                  textAlign: TextAlign.center,
+                ),
+              ),
             ),
           );
         },
