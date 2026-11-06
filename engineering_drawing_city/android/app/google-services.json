@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "982109319751",
+    "project_id": "engineering-drawing-city-5dd6f",
+    "storage_bucket": "engineering-drawing-city-5dd6f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:982109319751:android:461ec36d966099d0af3762",
+        "android_client_info": {
+          "package_name": "com.example.engineering_drawing_city"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDjOpQnXFF0YBSPrb0s2a7gWjch_kJAwuA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,94 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    // The role is read from the user's protected Firestore profile.
+    // Students cannot change their own role or suspension status.
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    function hasActiveSubscription() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/subscriptions/$(request.auth.uid))
+        && get(/databases/$(database)/documents/subscriptions/$(request.auth.uid)).data.status == 'active'
+        && get(/databases/$(database)/documents/subscriptions/$(request.auth.uid)).data.expiryDate > request.time;
+    }
+
+    function canReadPremiumContent() {
+      return isAdmin() || hasActiveSubscription();
+    }
+
+    match /users/{userId} {
+      allow create: if isOwner(userId)
+        && request.resource.data.role == 'student';
+
+      allow read: if isOwner(userId) || isAdmin();
+
+      allow update: if isAdmin()
+        || (
+          isOwner(userId)
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.isSuspended == resource.data.isSuspended
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['name', 'phoneNumber', 'year', 'program', 'photoUrl', 'updatedAt'])
+        );
+
+      allow delete: if isAdmin();
+    }
+
+    // Course catalogue metadata is public to signed-in app users. Premium
+    // lesson and document records require a current subscription or admin role.
+    match /courses/{courseId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /videos/{videoId} {
+      allow read: if canReadPremiumContent();
+      allow write: if isAdmin();
+    }
+
+    match /books/{bookId} {
+      allow read: if canReadPremiumContent();
+      allow write: if isAdmin();
+    }
+
+    match /past_papers/{paperId} {
+      allow read: if canReadPremiumContent();
+      allow write: if isAdmin();
+    }
+
+    match /app_settings/{settingsId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // Students may view only their own payment/subscription records.
+    // Only an administrator or trusted server function may activate access.
+    match /subscriptions/{subscriptionId} {
+      allow read: if signedIn()
+        && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /payments/{paymentId} {
+      allow read: if signedIn()
+        && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if signedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'pending';
+      allow update, delete: if isAdmin();
+    }
+  }
+}

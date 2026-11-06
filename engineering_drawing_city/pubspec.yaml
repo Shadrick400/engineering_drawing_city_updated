@@ -1,0 +1,38 @@
+name: engineering_drawing_city
+description: Engineering Drawing City - Educational video app for students
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  firebase_core: ^3.15.2
+  firebase_auth: ^5.7.0
+  cloud_firestore: ^5.6.12
+  firebase_storage: ^12.4.10
+  google_sign_in: ^7.2.0
+  youtube_player_flutter: ^9.1.0
+  intl: ^0.18.0
+  loading_animation_widget: ^1.2.0
+  flutter_svg: ^2.0.7
+  smooth_page_indicator: ^1.1.0
+  shimmer: ^3.0.0
+  cached_network_image: ^3.3.0
+  provider: ^6.0.0
+  url_launcher: ^6.3.0
+  cloud_functions: ^5.6.2
+  http: ^1.4.0
+  pdfx: ^2.9.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/logo.jpg

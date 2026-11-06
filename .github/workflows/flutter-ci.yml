@@ -1,0 +1,51 @@
+name: Flutter checks
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "engineering_drawing_city/**"
+      - ".github/workflows/flutter-ci.yml"
+  push:
+    branches:
+      - "feature/google-sign-in-students"
+      - "feature/zambia-subscription-profile-content"
+    paths:
+      - "engineering_drawing_city/**"
+      - ".github/workflows/flutter-ci.yml"
+
+jobs:
+  android-build-and-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: engineering_drawing_city
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.44.4"
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze Dart code
+        run: flutter analyze --no-fatal-infos
+
+      - name: Run Flutter tests
+        run: flutter test
+
+      - name: Build Android debug APK
+        run: flutter build apk --debug
