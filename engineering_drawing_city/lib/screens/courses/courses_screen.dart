@@ -578,6 +578,18 @@ class _BooksTab extends StatelessWidget {
     return StreamBuilder<List<BookModel>>(
       stream: firestoreService.getBooks(),
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                'Unable to load books from Firebase: ${snapshot.error}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: AppTheme.errorRed),
+              ),
+            ),
+          );
+        }
         final allBooks = snapshot.data ?? firestoreService.getBooksSync();
         final filtered = allBooks.where((b) {
           if (!b.isPublished || b.fileUrl.trim().isEmpty) return false;
