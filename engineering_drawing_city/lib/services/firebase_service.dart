@@ -668,46 +668,83 @@ class FirestoreService {
     final user = AuthService().currentUser;
     if (user == null || user.uid != userId) return;
     if (user.role != 'admin' && !hasActiveSubscription(userId)) return;
-    if (_premiumContentUserId == userId && _videosContentSubscription != null) return;
 
-    _stopPremiumContentListeners();
-    _premiumContentUserId = userId;
+    // Keep healthy listeners running. If one collection fails, it must not
+    // cancel the other premium-content listeners.
+    if (_premiumContentUserId != userId) {
+      _stopPremiumContentListeners();
+      _premiumContentUserId = userId;
+    }
 
-    _videosContentSubscription = _db.collection('videos').snapshots().listen((snapshot) {
-      final ids = snapshot.docs.map((doc) => doc.id).toSet();
-      _videos.removeWhere((id, _) => _remoteVideoIds.contains(id) && !ids.contains(id));
-      _remoteVideoIds
-        ..clear()
-        ..addAll(ids);
-      for (final doc in snapshot.docs) {
-        _videos[doc.id] = VideoModel.fromMap(doc.id, doc.data());
-      }
-      _videosController.add(getVideosSync());
-    }, onError: (_) => _stopPremiumContentListeners());
+    if (_videosContentSubscription == null) {
+      _videosContentSubscription =
+          _db.collection('videos').snapshots().listen((snapshot) {
+        final ids = snapshot.docs.map((doc) => doc.id).toSet();
+        _videos.removeWhere(
+            (id, _) => _remoteVideoIds.contains(id) && !ids.contains(id));
+        _remoteVideoIds
+          ..clear()
+          ..addAll(ids);
+        for (final doc in snapshot.docs) {
+          _videos[doc.id] = VideoModel.fromMap(doc.id, doc.data());
+        }
+        _videosController.add(getVideosSync());
+      }, onError: (Object error, StackTrace stackTrace) {
+        debugPrint('Firestore videos listener failed: $error');
+        _videosContentSubscription?.cancel();
+        _videosContentSubscription = null;
+      });
+    }
 
-    _booksContentSubscription = _db.collection('books').snapshots().listen((snapshot) {
-      final ids = snapshot.docs.map((doc) => doc.id).toSet();
-      _books.removeWhere((id, _) => _remoteBookIds.contains(id) && !ids.contains(id));
-      _remoteBookIds
-        ..clear()
-        ..addAll(ids);
-      for (final doc in snapshot.docs) {
-        _books[doc.id] = BookModel.fromMap(doc.id, doc.data());
-      }
-      _booksController.add(getBooksSync());
-    }, onError: (_) => _stopPremiumContentListeners());
+    if (_booksContentSubscription == null) {
+      _booksContentSubscription =
+          _db.collection('books').snapshots().listen((snapshot) {
+        final ids = snapshot.docs.map((doc) => doc.id).toSet();
+        _books.removeWhere(
+            (id, _) => _remoteBookIds.contains(id) && !ids.contains(id));
+        _remoteBookIds
+          ..clear()
+          ..addAll(ids);
+        for (final doc in snapshot.docs) {
+          try {
+            _books[doc.id] = BookModel.fromMap(doc.id, doc.data());
+          } catch (error, stackTrace) {
+            debugPrint('Unable to parse book ${doc.id}: $error');
+            debugPrintStack(stackTrace: stackTrace);
+          }
+        }
+        _booksController.add(getBooksSync());
+      }, onError: (Object error, StackTrace stackTrace) {
+        debugPrint('Firestore books listener failed: $error');
+        _booksContentSubscription?.cancel();
+        _booksContentSubscription = null;
+      });
+    }
 
-    _pastPapersContentSubscription = _db.collection('past_papers').snapshots().listen((snapshot) {
-      final ids = snapshot.docs.map((doc) => doc.id).toSet();
-      _pastPapers.removeWhere((id, _) => _remotePastPaperIds.contains(id) && !ids.contains(id));
-      _remotePastPaperIds
-        ..clear()
-        ..addAll(ids);
-      for (final doc in snapshot.docs) {
-        _pastPapers[doc.id] = PastPaperModel.fromMap(doc.id, doc.data());
-      }
-      _pastPapersController.add(getPastPapersSync());
-    }, onError: (_) => _stopPremiumContentListeners());
+    if (_pastPapersContentSubscription == null) {
+      _pastPapersContentSubscription =
+          _db.collection('past_papers').snapshots().listen((snapshot) {
+        final ids = snapshot.docs.map((doc) => doc.id).toSet();
+        _pastPapers.removeWhere(
+            (id, _) => _remotePastPaperIds.contains(id) && !ids.contains(id));
+        _remotePastPaperIds
+          ..clear()
+          ..addAll(ids);
+        for (final doc in snapshot.docs) {
+          try {
+            _pastPapers[doc.id] = PastPaperModel.fromMap(doc.id, doc.data());
+          } catch (error, stackTrace) {
+            debugPrint('Unable to parse past paper ${doc.id}: $error');
+            debugPrintStack(stackTrace: stackTrace);
+          }
+        }
+        _pastPapersController.add(getPastPapersSync());
+      }, onError: (Object error, StackTrace stackTrace) {
+        debugPrint('Firestore past-papers listener failed: $error');
+        _pastPapersContentSubscription?.cancel();
+        _pastPapersContentSubscription = null;
+      });
+    }
   }
 
   void _stopPremiumContentListeners() {
@@ -1111,14 +1148,7 @@ class FirestoreService {
     _booksController.add(_books.values.toList());
   }
 
-  Stream<List<BookModel>> getBooks() {
-    final list = _books.values.toList();
-    return _booksController.stream.asBroadcastStream(
-      onListen: (sub) {
-        _booksController.add(list);
-      },
-    );
-  }
+  Stream<List<BookModel>> getBooks() => _booksController.stream;
 
   List<BookModel> getBooksSync() {
     return _books.values.toList();
@@ -1129,19 +1159,16 @@ class FirestoreService {
   }
 
   Future<void> updateBook(BookModel book) async {
+    await _db.collection('books').doc(book.id).update(book.toMap());
     _books[book.id] = book;
-    _booksController.add(_books.values.toList());
-    try {
-      await _db.collection('books').doc(book.id).update(book.toMap());
-    } catch (_) {}
+    _booksController.add(getBooksSync());
   }
 
   Future<void> deleteBook(String bookId) async {
+    await _db.collection('books').doc(bookId).delete();
     _books.remove(bookId);
-    _booksController.add(_books.values.toList());
-    try {
-      await _db.collection('books').doc(bookId).delete();
-    } catch (_) {}
+    _remoteBookIds.remove(bookId);
+    _booksController.add(getBooksSync());
   }
 
   // ================= PAST PAPERS =================
@@ -1151,14 +1178,7 @@ class FirestoreService {
     _pastPapersController.add(_pastPapers.values.toList());
   }
 
-  Stream<List<PastPaperModel>> getPastPapers() {
-    final list = _pastPapers.values.toList();
-    return _pastPapersController.stream.asBroadcastStream(
-      onListen: (sub) {
-        _pastPapersController.add(list);
-      },
-    );
-  }
+  Stream<List<PastPaperModel>> getPastPapers() => _pastPapersController.stream;
 
   List<PastPaperModel> getPastPapersSync() {
     return _pastPapers.values.toList();
@@ -1177,19 +1197,16 @@ class FirestoreService {
   }
 
   Future<void> updatePastPaper(PastPaperModel paper) async {
+    await _db.collection('past_papers').doc(paper.id).update(paper.toMap());
     _pastPapers[paper.id] = paper;
-    _pastPapersController.add(_pastPapers.values.toList());
-    try {
-      await _db.collection('past_papers').doc(paper.id).update(paper.toMap());
-    } catch (_) {}
+    _pastPapersController.add(getPastPapersSync());
   }
 
   Future<void> deletePastPaper(String paperId) async {
+    await _db.collection('past_papers').doc(paperId).delete();
     _pastPapers.remove(paperId);
-    _pastPapersController.add(_pastPapers.values.toList());
-    try {
-      await _db.collection('past_papers').doc(paperId).delete();
-    } catch (_) {}
+    _remotePastPaperIds.remove(paperId);
+    _pastPapersController.add(getPastPapersSync());
   }
 
   // ================= SUBSCRIPTIONS =================
