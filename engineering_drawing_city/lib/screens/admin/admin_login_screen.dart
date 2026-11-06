@@ -224,6 +224,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
   final FirestoreService _firestoreService = FirestoreService();
   final AuthService _authService = AuthService();
   StreamSubscription? _usersChangesSubscription;
+  final Set<String> _activatingUserIds = {};
 
   @override
   void initState() {
@@ -237,6 +238,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     _usersChangesSubscription = _authService.usersStream.listen((_) {
       if (mounted) setState(() {});
     });
+    // Fetch a fresh Firebase snapshot after the dashboard listener is ready.
+    // This prevents the initial users update from being lost by the broadcast stream.
+    unawaited(_authService.loadAllUsers().catchError((Object error) {
+      debugPrint('Unable to load admin student list: $error');
+    }));
   }
 
   @override
@@ -1004,6 +1010,51 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
   }
 
   // ══════════════════════ USERS TAB ══════════════════════
+  Future<void> _activateStudentWithOneMonthAccess(
+    UserModel user, {
+    bool reactivate = false,
+  }) async {
+    if (_activatingUserIds.contains(user.uid)) return;
+    setState(() => _activatingUserIds.add(user.uid));
+
+    try {
+      if (reactivate) {
+        await _authService.reactivateAccount(user.uid);
+      }
+
+      final admin = _authService.currentUser;
+      final now = DateTime.now();
+      await _firestoreService.activateSubscription(
+        userId: user.uid,
+        paymentReference: 'admin_granted_30_days_${now.millisecondsSinceEpoch}',
+        amount: 0,
+        approvedBy: admin?.email ?? admin?.uid ?? 'admin',
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${user.name} now has full learning access for 30 days.',
+          ),
+          backgroundColor: AppTheme.successGreen,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not activate ${user.name}: $error'),
+          backgroundColor: AppTheme.errorRed,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _activatingUserIds.remove(user.uid));
+      }
+    }
+  }
+
   Widget _buildUsersTab() {
     final allUsers = _authService.getAllUsers().where((u) => u.role != 'admin').toList();
     final activeUsers = allUsers.where((u) => !u.isSuspended).toList();
@@ -1074,7 +1125,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                   itemBuilder: (context, index) {
                     final u = activeUsers[index];
                     final sub = _firestoreService.getSubscriptionSync(u.uid);
-                    final hasActiveSub = sub != null && sub.status == 'active';
+                    final hasActiveSub = sub != null &&
+                        sub.status == 'active' &&
+                        sub.expiryDate.isAfter(DateTime.now());
 
                     return Card(
                       elevation: 2,
@@ -1139,17 +1192,50 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                               ),
                             ),
                             const SizedBox(width: 8),
-                            // Action
-                            OutlinedButton.icon(
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: AppTheme.errorRed,
-                                side: BorderSide(color: AppTheme.errorRed.withValues(alpha: 0.6)),
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                textStyle: const TextStyle(fontSize: 11),
-                              ),
-                              icon: const Icon(Icons.block, size: 14),
-                              label: const Text('Suspend'),
-                              onPressed: () => _showSuspendUserDialog(u.uid, u.name),
+                            // Admin can grant or renew a full 30-day pass directly.
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              alignment: WrapAlignment.end,
+                              children: [
+                                ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: AppTheme.successGreen,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                    textStyle: const TextStyle(fontSize: 11),
+                                  ),
+                                  icon: _activatingUserIds.contains(u.uid)
+                                      ? const SizedBox(
+                                          width: 14,
+                                          height: 14,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : const Icon(Icons.lock_open, size: 14),
+                                  label: Text(
+                                    _activatingUserIds.contains(u.uid)
+                                        ? 'Activating'
+                                        : 'Activate 30 days',
+                                  ),
+                                  onPressed: _activatingUserIds.contains(u.uid)
+                                      ? null
+                                      : () => _activateStudentWithOneMonthAccess(u),
+                                ),
+                                OutlinedButton.icon(
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: AppTheme.errorRed,
+                                    side: BorderSide(color: AppTheme.errorRed.withValues(alpha: 0.6)),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                    textStyle: const TextStyle(fontSize: 11),
+                                  ),
+                                  icon: const Icon(Icons.block, size: 14),
+                                  label: const Text('Suspend'),
+                                  onPressed: () => _showSuspendUserDialog(u.uid, u.name),
+                                ),
+                              ],
                             ),
                           ],
                         ),
@@ -1408,39 +1494,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                                   ),
                                   icon: const Icon(Icons.check_circle_outline, size: 16),
                                   label: const Text('Activate Account'),
-                                  onPressed: () async {
-                                    final confirm = await showDialog<bool>(
-                                      context: context,
-                                      builder: (ctx) => AlertDialog(
-                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                                        title: const Text('Activate Account?'),
-                                        content: Text(
-                                          'Are you sure you want to reactivate ${u.name}\'s account? Their suspension record will be cleared.',
-                                        ),
-                                        actions: [
-                                          TextButton(
-                                            onPressed: () => Navigator.pop(ctx, false),
-                                            child: const Text('Cancel'),
+                                  onPressed: _activatingUserIds.contains(u.uid)
+                                      ? null
+                                      : () => _activateStudentWithOneMonthAccess(
+                                            u,
+                                            reactivate: true,
                                           ),
-                                          ElevatedButton(
-                                            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.successGreen),
-                                            onPressed: () => Navigator.pop(ctx, true),
-                                            child: const Text('Activate', style: TextStyle(color: Colors.white)),
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                    if (confirm == true) {
-                                      await _authService.reactivateAccount(u.uid);
-                                      setState(() {});
-                                      if (!mounted) return;
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(
-                                          content: Text('${u.name}\'s account has been reactivated.'),
-                                          backgroundColor: AppTheme.successGreen,
-                                        ),
-                                      );
-                                    }
                                   },
                                 ),
                               ],
