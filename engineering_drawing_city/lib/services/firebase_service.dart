@@ -16,9 +16,7 @@ import 'package:engineering_drawing_city/models/video_model.dart';
 class AuthService {
   static final AuthService _instance = AuthService._internal();
   factory AuthService() => _instance;
-  AuthService._internal() {
-    _initializeSeedUsers();
-  }
+  AuthService._internal();
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   static Future<void>? _googleSignInInitialization;
@@ -34,81 +32,6 @@ class AuthService {
   bool get isAdmin => _currentUser?.role == 'admin';
 
   final Map<String, UserModel> _usersDb = {};
-  void _initializeSeedUsers() {
-    // Seed student accounts with varying states including Terms & Conditions violations
-    final student1 = UserModel(
-      uid: 'student_01',
-      email: 'demo.student01@example.com',
-      name: 'Demo Student 01',
-      role: 'student',
-      year: 'Year 2',
-      program: 'Mechanical Engineering',
-      institution: 'Demo Institution',
-      phoneNumber: null,
-      isSuspended: false,
-      createdAt: DateTime.now().subtract(const Duration(days: 45)),
-      updatedAt: DateTime.now().subtract(const Duration(days: 10)),
-    );
-    _usersDb[student1.uid] = student1;
-    _usersDb[student1.email.toLowerCase()] = student1;
-
-    final student2 = UserModel(
-      uid: 'student_02',
-      email: 'demo.student02@example.com',
-      name: 'Demo Student 02',
-      role: 'student',
-      year: 'Year 3',
-      program: 'Civil Engineering',
-      institution: 'Demo Institution',
-      phoneNumber: '',
-      isSuspended: true,
-      suspensionReason: 'Demo suspension state for testing.',
-      suspendedAt: DateTime.now().subtract(const Duration(days: 2)),
-      createdAt: DateTime.now().subtract(const Duration(days: 30)),
-      updatedAt: DateTime.now().subtract(const Duration(days: 2)),
-    );
-    _usersDb[student2.uid] = student2;
-    _usersDb[student2.email.toLowerCase()] = student2;
-
-    final student3 = UserModel(
-      uid: 'student_03',
-      email: 'demo.student03@example.com',
-      name: 'Demo Student 03',
-      role: 'student',
-      year: 'Year 1',
-      program: 'Electrical & Electronics',
-      institution: 'Demo Institution',
-      phoneNumber: '',
-      isSuspended: true,
-      suspensionReason: 'Demo suspension state for testing.',
-      suspendedAt: DateTime.now().subtract(const Duration(hours: 18)),
-      createdAt: DateTime.now().subtract(const Duration(days: 14)),
-      updatedAt: DateTime.now().subtract(const Duration(hours: 18)),
-    );
-    _usersDb[student3.uid] = student3;
-    _usersDb[student3.email.toLowerCase()] = student3;
-
-    final student4 = UserModel(
-      uid: 'student_04',
-      email: 'demo.student04@example.com',
-      name: 'Demo Student 04',
-      role: 'student',
-      year: 'Year 2',
-      program: 'Geomatic Engineering',
-      institution: 'Demo Institution',
-      phoneNumber: '',
-      isSuspended: false,
-      createdAt: DateTime.now().subtract(const Duration(days: 20)),
-      updatedAt: DateTime.now().subtract(const Duration(days: 5)),
-    );
-    _usersDb[student4.uid] = student4;
-    _usersDb[student4.email.toLowerCase()] = student4;
-
-    // No auto-login — users must sign in explicitly
-    _currentUser = null;
-    _userStreamController.add(null);
-  }
-
   void setCurrentUser(UserModel? user) {
     _currentUser = user;
     if (user != null) {
@@ -779,7 +702,8 @@ class FirestoreService {
   }
 
   void _initializeSeedData() {
-    // 1. App Settings
+    // Keep only application defaults. Courses, videos, books, past papers,
+    // subscriptions, and payments must come from real Firestore records.
     _appSettings = AppSettingsModel(
       appName: 'Engineering Drawing City',
       logo: 'assets/images/logo.png',
@@ -793,234 +717,6 @@ class FirestoreService {
       contactInformation: 'Official support contact details pending confirmation.',
       maintenanceMode: false,
     );
-
-    // 2. Courses
-    final seedCourses = [
-      CourseModel(
-        id: 'course_01',
-        title: 'Fundamentals of Engineering Drawing',
-        description:
-            'Drawing instruments, standard sheet sizes (A0-A4), title blocks, line types, lettering, and plain & diagonal scales.',
-        imageUrl: '',
-        order: 1,
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 30)),
-        updatedAt: DateTime.now(),
-      ),
-      CourseModel(
-        id: 'course_02',
-        title: 'Orthographic Projections Masterclass',
-        description:
-            'First Angle and Third Angle projection rules, principal planes of projection, front/top/side views of solids and brackets.',
-        imageUrl: '',
-        order: 2,
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 28)),
-        updatedAt: DateTime.now(),
-      ),
-      CourseModel(
-        id: 'course_03',
-        title: 'Isometric & Axonometric Drawing',
-        description:
-            'Isometric axes at 30°, box construction method, 4-centre method for isometric circles and ellipses, oblique views.',
-        imageUrl: '',
-        order: 3,
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 25)),
-        updatedAt: DateTime.now(),
-      ),
-      CourseModel(
-        id: 'course_04',
-        title: 'Sectional Views & Conic Sections',
-        description:
-            'Cutting planes, full sections, half sections, offset sections, hatching conventions, and drawing ellipses and parabolas.',
-        imageUrl: '',
-        order: 4,
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 20)),
-        updatedAt: DateTime.now(),
-      ),
-      CourseModel(
-        id: 'course_05',
-        title: 'Machine Drawing, GD&T & CAD Essentials',
-        description:
-            'Thread profiles, bolts and nuts, limits, fits and tolerances, GD&T symbols, and introduction to 2D CAD drafting.',
-        imageUrl: '',
-        order: 5,
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 15)),
-        updatedAt: DateTime.now(),
-      ),
-    ];
-
-    for (var c in seedCourses) {
-      _courses[c.id] = c;
-    }
-
-    // 3. Videos
-    // Premium videos are loaded from protected Firestore records only after subscription/admin verification.
-
-
-    // 4. Seed Books
-    final seedBooks = [
-      BookModel(
-        id: 'book_01',
-        title: 'Engineering Drawing (N.D. Bhatt)',
-        author: 'N.D. Bhatt & V.M. Panchal',
-        description:
-            'The classic reference for engineering drawing covering all fundamentals, orthographic projections, and machine drawing in detail.',
-        courseId: 'course_01',
-        fileUrl: '',
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 60)),
-        updatedAt: DateTime.now(),
-      ),
-      BookModel(
-        id: 'book_02',
-        title: 'Engineering Graphics with AutoCAD',
-        author: 'James D. Bethune',
-        description:
-            'Integrates 2D and 3D CAD with traditional engineering graphics principles. Covers projections, sections, and GD&T.',
-        courseId: 'course_05',
-        fileUrl: '',
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 45)),
-        updatedAt: DateTime.now(),
-      ),
-      BookModel(
-        id: 'book_03',
-        title: 'Fundamentals of Technical Drawing',
-        author: 'Giesecke et al.',
-        description:
-            'Comprehensive textbook covering lines, lettering, geometric constructions, orthographic and isometric views.',
-        courseId: 'course_02',
-        fileUrl: '',
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 30)),
-        updatedAt: DateTime.now(),
-      ),
-    ];
-
-    for (var b in seedBooks) {
-      _books[b.id] = b;
-    }
-
-    // 5. Seed Past Papers
-    final seedPastPapers = [
-      PastPaperModel(
-        id: 'pp_01',
-        title: 'Test 1 – 2023 (Fundamentals)',
-        description: 'Drawing instruments, line types, and plain scales.',
-        year: '2023',
-        type: 'test1',
-        courseId: 'course_01',
-        fileUrl: '',
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 365)),
-        updatedAt: DateTime.now(),
-      ),
-      PastPaperModel(
-        id: 'pp_02',
-        title: 'Test 2 – 2023 (Projections)',
-        description: 'First and third angle projections problems.',
-        year: '2023',
-        type: 'test2',
-        courseId: 'course_02',
-        fileUrl: '',
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 350)),
-        updatedAt: DateTime.now(),
-      ),
-      PastPaperModel(
-        id: 'pp_03',
-        title: 'Sessional Exam – 2023',
-        description: 'Full course sessional examination covering all topics.',
-        year: '2023',
-        type: 'sessional',
-        courseId: 'course_01',
-        fileUrl: '',
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 330)),
-        updatedAt: DateTime.now(),
-      ),
-      PastPaperModel(
-        id: 'pp_04',
-        title: 'Test 1 – 2024 (Fundamentals)',
-        description: 'Drawing standards, title blocks, and lettering.',
-        year: '2024',
-        type: 'test1',
-        courseId: 'course_01',
-        fileUrl: '',
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 180)),
-        updatedAt: DateTime.now(),
-      ),
-      PastPaperModel(
-        id: 'pp_05',
-        title: 'Test 2 – 2024 (Isometric)',
-        description: 'Isometric box method and four-centre ellipse exercises.',
-        year: '2024',
-        type: 'test2',
-        courseId: 'course_03',
-        fileUrl: '',
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 165)),
-        updatedAt: DateTime.now(),
-      ),
-      PastPaperModel(
-        id: 'pp_06',
-        title: 'Sessional Exam – 2024',
-        description: 'Full sessional covering orthographic, isometric, and sectioning.',
-        year: '2024',
-        type: 'sessional',
-        courseId: 'course_02',
-        fileUrl: '',
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 140)),
-        updatedAt: DateTime.now(),
-      ),
-    ];
-
-    for (var pp in seedPastPapers) {
-      _pastPapers[pp.id] = pp;
-    }
-
-    // 6. Initial Subscriptions
-    final activeSub = SubscriptionModel(
-      id: 'sub_student_01',
-      userId: 'student_01',
-      status: 'active',
-      startDate: DateTime.now().subtract(const Duration(days: 5)),
-      expiryDate: DateTime.now().add(const Duration(days: 25)),
-      amount: 10.0,
-      paymentReference: 'MM-TXN-8849201',
-      approvedBy: 'admin_01',
-      createdAt: DateTime.now().subtract(const Duration(days: 5)),
-    );
-    _subscriptions[activeSub.userId] = activeSub;
-
-    // 7. Seed Payments
-    final pendingPayment = PaymentModel(
-      id: 'pay_001',
-      userId: 'student_01',
-      amount: 10.0,
-      paymentReference: 'MM-REF-9923841',
-      status: 'pending',
-      submittedAt: DateTime.now().subtract(const Duration(hours: 2)),
-    );
-    _payments[pendingPayment.id] = pendingPayment;
-
-    final approvedPayment = PaymentModel(
-      id: 'pay_002',
-      userId: 'student_01',
-      amount: 10.0,
-      paymentReference: 'MM-TXN-8849201',
-      status: 'approved',
-      submittedAt: DateTime.now().subtract(const Duration(days: 5)),
-      reviewedAt: DateTime.now().subtract(const Duration(days: 5)),
-      reviewedBy: 'admin_01',
-    );
-    _payments[approvedPayment.id] = approvedPayment;
   }
 
   // ================= USERS =================
@@ -1241,6 +937,9 @@ class FirestoreService {
 
   void watchSubscription(String userId) {
     _listenToAppSettings();
+    // Admin access must not depend on a subscription query succeeding.
+    // Students are rechecked again when their subscription snapshot arrives.
+    _refreshPremiumContentAccess(userId);
     if (AuthService().currentUser?.role == 'admin' &&
         !_legacySubscriptionMigrationStarted) {
       _legacySubscriptionMigrationStarted = true;
