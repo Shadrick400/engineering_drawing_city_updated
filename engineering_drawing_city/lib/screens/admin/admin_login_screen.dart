@@ -1500,7 +1500,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                                             u,
                                             reactivate: true,
                                           ),
-                                  },
                                 ),
                               ],
                             ),
