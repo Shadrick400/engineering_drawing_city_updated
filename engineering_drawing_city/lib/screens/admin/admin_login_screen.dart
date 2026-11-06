@@ -229,6 +229,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 8, vsync: this);
+    final admin = _authService.currentUser;
+    if (admin != null) {
+      // Reassert admin content access whenever the dashboard is opened.
+      _firestoreService.watchSubscription(admin.uid);
+    }
     _usersChangesSubscription = _authService.usersStream.listen((_) {
       if (mounted) setState(() {});
     });
