@@ -1508,10 +1508,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                     createdAt: DateTime.now(),
                     updatedAt: DateTime.now(),
                   );
-                  await _firestoreService.saveBook(book);
-                  setState(() {});
+                  try {
+                    await _firestoreService.saveBook(book);
+                    if (!mounted) return;
+                    setState(() {});
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Book uploaded successfully.')),
+                    );
+                  } catch (error) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Could not upload book: $error')),
+                    );
+                  }
                 }
-                Navigator.pop(ctx);
               },
               child: const Text('Save Book', style: TextStyle(color: Colors.white)),
             ),
@@ -1626,10 +1637,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                     createdAt: DateTime.now(),
                     updatedAt: DateTime.now(),
                   );
-                  await _firestoreService.savePastPaper(paper);
-                  setState(() {});
+                  try {
+                    await _firestoreService.savePastPaper(paper);
+                    if (!mounted) return;
+                    setState(() {});
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Past paper uploaded successfully.')),
+                    );
+                  } catch (error) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Could not upload past paper: $error')),
+                    );
+                  }
                 }
-                Navigator.pop(ctx);
               },
               child: const Text('Save Paper', style: TextStyle(color: Colors.white)),
             ),
@@ -1877,10 +1899,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                     createdAt: DateTime.now(),
                     updatedAt: DateTime.now(),
                   );
-                  await _firestoreService.saveVideo(video);
-                  setState(() {});
+                  try {
+                    await _firestoreService.saveVideo(video);
+                    if (!mounted) return;
+                    setState(() {});
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Video lesson uploaded successfully.')),
+                    );
+                  } catch (error) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Could not upload video lesson: $error')),
+                    );
+                  }
                 }
-                Navigator.pop(ctx);
               },
               child: const Text('Save Lesson'),
             ),
