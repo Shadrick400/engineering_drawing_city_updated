@@ -856,19 +856,20 @@ class FirestoreService {
   }
 
   Future<void> updateVideo(VideoModel video) async {
+    await _db.collection('videos').doc(video.id).update(video.toMap());
     _videos[video.id] = video;
-    _videosController.add(_videos.values.toList()..sort((a, b) => a.order.compareTo(b.order)));
-    try {
-      await _db.collection('videos').doc(video.id).update(video.toMap());
-    } catch (_) {}
+    _videosController.add(
+      _videos.values.toList()..sort((a, b) => a.order.compareTo(b.order)),
+    );
   }
 
   Future<void> deleteVideo(String videoId) async {
+    await _db.collection('videos').doc(videoId).delete();
     _videos.remove(videoId);
-    _videosController.add(_videos.values.toList()..sort((a, b) => a.order.compareTo(b.order)));
-    try {
-      await _db.collection('videos').doc(videoId).delete();
-    } catch (_) {}
+    _remoteVideoIds.remove(videoId);
+    _videosController.add(
+      _videos.values.toList()..sort((a, b) => a.order.compareTo(b.order)),
+    );
   }
 
   // ================= BOOKS =================
