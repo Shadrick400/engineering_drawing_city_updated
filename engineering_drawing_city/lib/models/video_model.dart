@@ -1,3 +1,12 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+DateTime _readVideoDate(dynamic value) {
+  if (value is Timestamp) return value.toDate();
+  if (value is DateTime) return value;
+  if (value is String) return DateTime.tryParse(value) ?? DateTime.now();
+  return DateTime.now();
+}
+
 class VideoModel {
   final String id;
   final String title;
@@ -33,12 +42,8 @@ class VideoModel {
       courseId: data['courseId'] ?? '',
       order: data['order'] ?? 0,
       isPublished: data['isPublished'] ?? true,
-      createdAt: data['createdAt'] != null
-          ? DateTime.parse(data['createdAt'])
-          : DateTime.now(),
-      updatedAt: data['updatedAt'] != null
-          ? DateTime.parse(data['updatedAt'])
-          : DateTime.now(),
+      createdAt: _readVideoDate(data['createdAt']),
+      updatedAt: _readVideoDate(data['updatedAt']),
     );
   }
 
