@@ -121,6 +121,9 @@ Future<UserModel> signInWithEmailPassword({
 
     _currentUser = user;
     FirestoreService().watchSubscription(user.uid);
+    if (user.role == 'admin') {
+      await loadAllUsers();
+    }
 
     _usersDb[user.uid] = user;
     _usersDb[cleanEmail] = user;
@@ -439,19 +442,23 @@ Future<void> sendPasswordResetEmail(String email) async {
   /// Reactivate / Activate a suspended account (admin action)
   Future<void> reactivateAccount(String uid) async {
     final user = _usersDb[uid];
-    if (user != null) {
-      final reactivated = user.copyWith(
-        isSuspended: false,
-        clearSuspensionReason: true,
-        updatedAt: DateTime.now(),
-      );
-      _usersDb[uid] = reactivated;
-      _usersDb[reactivated.email.toLowerCase()] = reactivated;
-      if (_currentUser?.uid == uid) {
-        _currentUser = reactivated;
-      }
-      _userStreamController.add(_currentUser);
-    }
+    if (user == null) return;
+
+    final reactivated = user.copyWith(
+      isSuspended: false,
+      clearSuspensionReason: true,
+      updatedAt: DateTime.now(),
+    );
+    await FirebaseFirestore.instance.collection('users').doc(uid).update({
+      'isSuspended': false,
+      'suspensionReason': FieldValue.delete(),
+      'suspendedAt': FieldValue.delete(),
+      'updatedAt': reactivated.updatedAt,
+    });
+    _usersDb[uid] = reactivated;
+    _usersDb[reactivated.email.toLowerCase()] = reactivated;
+    if (_currentUser?.uid == uid) _currentUser = reactivated;
+    _userStreamController.add(_currentUser);
   }
 
   /// Activate suspended user (alias for reactivateAccount)
@@ -460,20 +467,25 @@ Future<void> sendPasswordResetEmail(String email) async {
   /// Suspend a user account for Terms & Conditions breach (admin action)
   Future<void> suspendUser(String uid, {required String reason}) async {
     final user = _usersDb[uid];
-    if (user != null) {
-      final suspended = user.copyWith(
-        isSuspended: true,
-        suspensionReason: reason,
-        suspendedAt: DateTime.now(),
-        updatedAt: DateTime.now(),
-      );
-      _usersDb[uid] = suspended;
-      _usersDb[suspended.email.toLowerCase()] = suspended;
-      if (_currentUser?.uid == uid) {
-        _currentUser = suspended;
-      }
-      _userStreamController.add(_currentUser);
-    }
+    if (user == null) return;
+
+    final now = DateTime.now();
+    final suspended = user.copyWith(
+      isSuspended: true,
+      suspensionReason: reason,
+      suspendedAt: now,
+      updatedAt: now,
+    );
+    await FirebaseFirestore.instance.collection('users').doc(uid).update({
+      'isSuspended': true,
+      'suspensionReason': reason,
+      'suspendedAt': now,
+      'updatedAt': now,
+    });
+    _usersDb[uid] = suspended;
+    _usersDb[suspended.email.toLowerCase()] = suspended;
+    if (_currentUser?.uid == uid) _currentUser = suspended;
+    _userStreamController.add(_currentUser);
   }
 
   Future<void> signOut() async {
@@ -490,6 +502,23 @@ Future<void> sendPasswordResetEmail(String email) async {
     try {
       await _auth.sendPasswordResetEmail(email: email.trim());
     } catch (_) {}
+  }
+
+  /// Load real student and administrator profiles from Firestore.
+  /// This replaces the old in-memory demo accounts.
+  Future<void> loadAllUsers() async {
+    final snapshot = await FirebaseFirestore.instance.collection('users').get();
+    _usersDb.clear();
+    for (final document in snapshot.docs) {
+      final user = UserModel.fromMap(document.id, document.data());
+      _usersDb[user.uid] = user;
+      _usersDb[user.email.toLowerCase()] = user;
+    }
+    final current = _currentUser;
+    if (current != null) {
+      _usersDb[current.uid] = current;
+      _usersDb[current.email.toLowerCase()] = current;
+    }
   }
 
   /// Get all users (for admin)
