@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:engineering_drawing_city/models/book_model.dart';
 import 'package:engineering_drawing_city/models/course_model.dart';
 import 'package:engineering_drawing_city/models/past_paper_model.dart';
+import 'package:engineering_drawing_city/models/video_model.dart';
 import 'package:engineering_drawing_city/services/firebase_service.dart';
 import 'package:engineering_drawing_city/theme/app_theme.dart';
 
@@ -272,14 +273,25 @@ class _VideosTabState extends State<_VideosTab> {
           );
         }
 
-        return ListView.builder(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
-          itemCount: filtered.length,
-          itemBuilder: (context, index) {
-            final course = filtered[index];
-            final videos =
-                widget.firestoreService.getVideosByCourseSync(course.id);
-            final isExpanded = _selectedCourseId == course.id;
+        return StreamBuilder<List<VideoModel>>(
+          stream: widget.firestoreService.getVideos(),
+          builder: (context, videoSnapshot) {
+            final allVideos =
+                videoSnapshot.data ?? widget.firestoreService.getVideosSync();
+
+            return ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+              itemCount: filtered.length,
+              itemBuilder: (context, index) {
+                final course = filtered[index];
+                final videos = allVideos
+                    .where((video) =>
+                        video.courseId == course.id &&
+                        video.isPublished &&
+                        video.youtubeVideoId.trim().isNotEmpty)
+                    .toList()
+                  ..sort((a, b) => a.order.compareTo(b.order));
+                final isExpanded = _selectedCourseId == course.id;
 
             return Card(
               margin: const EdgeInsets.only(bottom: 16),
@@ -511,6 +523,8 @@ class _VideosTabState extends State<_VideosTab> {
                     ),
                 ],
               ),
+            );
+              },
             );
           },
         );
