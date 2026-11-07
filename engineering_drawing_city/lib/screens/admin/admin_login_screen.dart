@@ -342,6 +342,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                   _buildStatCard('Video Lessons', '${videos.length}', Icons.ondemand_video, AppTheme.accentCyan),
                   _buildStatCard('Books', '${books.length}', Icons.auto_stories, const Color(0xFF7C3AED)),
                   _buildStatCard('Past Papers', '${papers.length}', Icons.assignment, const Color(0xFF059669)),
+                  StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                    stream: FirebaseFirestore.instance.collection('users').snapshots(),
+                    builder: (context, snapshot) {
+                      final registeredStudents = snapshot.hasData
+                          ? snapshot.data!.docs.where((doc) =>
+                              (doc.data()['role'] as String? ?? 'student') != 'admin').length
+                          : 0;
+                      return _buildStatCard(
+                        'Registered Students',
+                        snapshot.hasError ? '!' : '${snapshot.hasData ? registeredStudents : '...'}',
+                        Icons.people_alt_outlined,
+                        AppTheme.primaryBlue,
+                      );
+                    },
+                  ),
                   _buildStatCard('Pending Payments', '$pendingCount', Icons.pending_actions, Colors.orange),
                   _buildStatCard('Approved Passes', '$approvedCount', Icons.verified, AppTheme.successGreen),
                   if (suspendedCount > 0)
@@ -366,6 +381,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                         spacing: 12,
                         runSpacing: 12,
                         children: [
+                          OutlinedButton.icon(
+                            icon: const Icon(Icons.people_alt_outlined),
+                            label: const Text('Manage Students'),
+                            onPressed: () => _tabController.animateTo(5),
+                          ),
                           ElevatedButton.icon(
                             style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryBlue),
                             icon: const Icon(Icons.add_circle_outline),
@@ -1281,8 +1301,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
         ),
       ),
     );
-  }
-
   }
 
   // ══════════════════════ SUSPENDED USERS TAB ══════════════════════
