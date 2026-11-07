@@ -9,6 +9,7 @@ import 'package:engineering_drawing_city/models/book_model.dart';
 import 'package:engineering_drawing_city/models/course_model.dart';
 import 'package:engineering_drawing_city/models/past_paper_model.dart';
 import 'package:engineering_drawing_city/models/payment_model.dart';
+import 'package:engineering_drawing_city/models/subscription_model.dart';
 import 'package:engineering_drawing_city/models/video_model.dart';
 import 'package:engineering_drawing_city/models/user_model.dart';
 import 'package:engineering_drawing_city/services/firebase_service.dart';
