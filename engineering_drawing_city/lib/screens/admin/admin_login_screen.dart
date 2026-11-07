@@ -1104,12 +1104,39 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
             .toList()
           ..sort((a, b) => (b.createdAt ?? DateTime(2000))
               .compareTo(a.createdAt ?? DateTime(2000)));
-        return _buildActiveUsersList(allUsers);
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          // Read subscription records too, so every student's access badge
+          // reflects the real Firestore expiry rather than an empty local cache.
+          stream: FirebaseFirestore.instance.collection('subscriptions').snapshots(),
+          builder: (context, subscriptionSnapshot) {
+            if (subscriptionSnapshot.hasError) {
+              return Center(
+                child: Text(
+                  'Users loaded, but subscription status could not be read: ${subscriptionSnapshot.error}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: AppTheme.errorRed),
+                ),
+              );
+            }
+            final subscriptions = <String, SubscriptionModel>{};
+            for (final doc in subscriptionSnapshot.data?.docs ?? []) {
+              try {
+                subscriptions[doc.id] = SubscriptionModel.fromMap(doc.id, doc.data());
+              } catch (error) {
+                debugPrint('Unable to parse subscription ${doc.id}: $error');
+              }
+            }
+            return _buildActiveUsersList(allUsers, subscriptions);
+          },
+        );
       },
     );
   }
 
-  Widget _buildActiveUsersList(List<UserModel> allUsers) {
+  Widget _buildActiveUsersList(
+    List<UserModel> allUsers,
+    Map<String, SubscriptionModel> subscriptions,
+  ) {
     final activeUsers = allUsers.where((u) => !u.isSuspended).toList();
     final suspendedCount = allUsers.where((u) => u.isSuspended).length;
 
@@ -1177,7 +1204,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                   separatorBuilder: (c, i) => const SizedBox(height: 10),
                   itemBuilder: (context, index) {
                     final u = activeUsers[index];
-                    final sub = _firestoreService.getSubscriptionSync(u.uid);
+                    final sub = subscriptions[u.uid];
                     final hasActiveSub = sub != null &&
                         sub.status == 'active' &&
                         sub.expiryDate.isAfter(DateTime.now());
@@ -1591,8 +1618,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
         ),
       ),
     );
-  }
-
   }
 
   /// Small info chip helper
