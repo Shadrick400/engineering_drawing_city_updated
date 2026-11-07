@@ -30,8 +30,18 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
+      // A user may create only their own student profile. Prevent extra
+      // privilege-bearing fields from being injected during registration.
       allow create: if isOwner(userId)
-        && request.resource.data.role == 'student';
+        && request.resource.data.role == 'student'
+        && request.resource.data.keys().hasOnly([
+          'email', 'name', 'role', 'photoUrl', 'year', 'program',
+          'institution', 'phoneNumber', 'isSuspended', 'suspensionReason',
+          'suspendedAt', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.email is string
+        && request.resource.data.name is string
+        && request.resource.data.isSuspended == false;
 
       allow read: if isOwner(userId) || isAdmin();
 
@@ -44,7 +54,9 @@ service cloud.firestore {
             .hasOnly(['name', 'phoneNumber', 'year', 'program', 'photoUrl', 'updatedAt'])
         );
 
-      allow delete: if isAdmin();
+      // Student identity/profile records are retained; content cleanup must
+      // never be able to delete a user's account document.
+      allow delete: if false;
     }
 
     // Course catalogue metadata is public to signed-in app users. Premium
