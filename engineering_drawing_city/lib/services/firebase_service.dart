@@ -847,11 +847,54 @@ class FirestoreService {
   }
 
   Future<void> deleteCourse(String courseId) async {
+    // A course owns its learning materials. Remove those content documents
+    // together, but never touch users, subscriptions, or payment records.
+    final collections = ['videos', 'books', 'past_papers'];
+    final related = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+    for (final name in collections) {
+      final snapshot = await _db
+          .collection(name)
+          .where('courseId', isEqualTo: courseId)
+          .get();
+      related.addAll(snapshot.docs);
+    }
+
+    final documents = <DocumentReference<Map<String, dynamic>>>[
+      ...related.map((doc) => doc.reference),
+      _db.collection('courses').doc(courseId),
+    ];
+
+    // Firestore batches are limited to 500 writes.
+    for (var offset = 0; offset < documents.length; offset += 450) {
+      final batch = _db.batch();
+      for (final ref in documents.skip(offset).take(450)) {
+        batch.delete(ref);
+      }
+      await batch.commit();
+    }
+
     _courses.remove(courseId);
-    _coursesController.add(_courses.values.toList()..sort((a, b) => a.order.compareTo(b.order)));
-    try {
-      await _db.collection('courses').doc(courseId).delete();
-    } catch (_) {}
+    _remoteCourseIds.remove(courseId);
+    for (final doc in related) {
+      switch (doc.reference.parent.id) {
+        case 'videos':
+          _videos.remove(doc.id);
+          _remoteVideoIds.remove(doc.id);
+          break;
+        case 'books':
+          _books.remove(doc.id);
+          _remoteBookIds.remove(doc.id);
+          break;
+        case 'past_papers':
+          _pastPapers.remove(doc.id);
+          _remotePastPaperIds.remove(doc.id);
+          break;
+      }
+    }
+    _coursesController.add(getCoursesSync());
+    _videosController.add(getVideosSync());
+    _booksController.add(getBooksSync());
+    _pastPapersController.add(getPastPapersSync());
   }
 
   // ================= VIDEOS =================
