@@ -232,7 +232,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 8, vsync: this);
+    _tabController = TabController(length: 9, vsync: this);
     final admin = _authService.currentUser;
     if (admin != null) {
       // Reassert admin content access whenever the dashboard is opened.
@@ -287,6 +287,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
             Tab(icon: Icon(Icons.dashboard_outlined), text: 'Overview'),
             Tab(icon: Icon(Icons.payments_outlined), text: 'Payments'),
             Tab(icon: Icon(Icons.auto_stories_outlined), text: 'Courses'),
+            Tab(icon: Icon(Icons.ondemand_video_outlined), text: 'Videos'),
             Tab(icon: Icon(Icons.menu_book_outlined), text: 'Books'),
             Tab(icon: Icon(Icons.assignment_outlined), text: 'Past Papers'),
             Tab(icon: Icon(Icons.people_outlined), text: 'Students'),
@@ -301,6 +302,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
           _buildOverviewTab(),
           _buildPaymentsTab(),
           _buildCoursesTab(),
+          _buildVideosTab(),
           _buildBooksTab(),
           _buildPastPapersTab(),
           _buildUsersTab(),
@@ -385,7 +387,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                           OutlinedButton.icon(
                             icon: const Icon(Icons.people_alt_outlined),
                             label: const Text('Manage Students'),
-                            onPressed: () => _tabController.animateTo(5),
+                            onPressed: () => _tabController.animateTo(6),
                           ),
                           ElevatedButton.icon(
                             style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryBlue),
@@ -869,6 +871,112 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
   }
 
   // ══════════════════════ BOOKS TAB ══════════════════════
+  Widget _buildVideosTab() {
+    return StreamBuilder<List<VideoModel>>(
+      stream: _firestoreService.getVideos(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Text(
+              'Unable to load videos: ${snapshot.error}',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppTheme.errorRed),
+            ),
+          );
+        }
+        final videos = snapshot.data ?? _firestoreService.getVideosSync();
+        final courses = _firestoreService.getCoursesSync();
+        final courseNames = {for (final course in courses) course.id: course.title};
+
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1000),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Video Management',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.darkNavy,
+                          ),
+                        ),
+                      ),
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.accentCyan,
+                        ),
+                        icon: const Icon(Icons.add),
+                        label: const Text('Add Video'),
+                        onPressed: () => _showAddVideoDialog(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${videos.length} video lesson(s) in Firebase',
+                    style: const TextStyle(color: AppTheme.textMuted),
+                  ),
+                  const SizedBox(height: 16),
+                  if (videos.isEmpty)
+                    const Card(
+                      child: Padding(
+                        padding: EdgeInsets.all(28),
+                        child: Center(
+                          child: Text('No video lessons yet. Use Add Video to publish your first lesson.'),
+                        ),
+                      ),
+                    )
+                  else
+                    ...videos.map((video) => Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        leading: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.network(
+                            video.thumbnailUrl,
+                            width: 88,
+                            height: 58,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) => Container(
+                              width: 88,
+                              height: 58,
+                              color: AppTheme.lightGrey,
+                              child: const Icon(Icons.ondemand_video),
+                            ),
+                          ),
+                        ),
+                        title: Text(
+                          video.title,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        subtitle: Text(
+                          '${courseNames[video.courseId] ?? 'Course not found'} • ${video.isPublished ? 'Published' : 'Unpublished'}\nYouTube ID: ${video.youtubeVideoId}',
+                        ),
+                        isThreeLine: true,
+                        trailing: IconButton(
+                          tooltip: 'Delete this video',
+                          icon: const Icon(Icons.delete_outline, color: AppTheme.errorRed),
+                          onPressed: () => _deleteVideoFromAdmin(video),
+                        ),
+                      ),
+                    )),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildBooksTab() {
     return StreamBuilder<List<BookModel>>(
       stream: _firestoreService.getBooks(),
