@@ -1,5 +1,8 @@
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:flutter/material.dart';
+
+import 'package:flutter/foundation.dart';
 
 import 'package:engineering_drawing_city/firebase_options.dart';
 import 'package:engineering_drawing_city/models/course_model.dart';
@@ -16,14 +19,56 @@ import 'package:engineering_drawing_city/screens/splash/splash_screen.dart';
 import 'package:engineering_drawing_city/screens/video/video_player_screen.dart';
 import 'package:engineering_drawing_city/theme/app_theme.dart';
 
-void main() async {
+const appCheckWebSiteKey = String.fromEnvironment(
+  'APP_CHECK_WEB_RECAPTCHA_SITE_KEY',
+);
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
-  } catch (e) {
-    debugPrint('Firebase initialization notice: $e');
+
+    // App Check must be activated after Firebase.initializeApp and before
+    // any Firestore, Auth, Storage or Cloud Functions use.
+    if (kIsWeb) {
+      final siteKey = appCheckWebSiteKey.trim();
+      if (kDebugMode) {
+        // For localhost development, web/index.html must set
+        // self.FIREBASE_APPCHECK_DEBUG_TOKEN = true before flutter_bootstrap.js.
+        // A debug token is then printed in the browser console for allowlisting.
+        await FirebaseAppCheck.instance.activate(
+          webProvider: ReCaptchaV3Provider(
+            siteKey.isEmpty ? 'debug-only-placeholder' : siteKey,
+          ),
+        );
+      } else if (siteKey.isNotEmpty) {
+        await FirebaseAppCheck.instance.activate(
+          webProvider: ReCaptchaV3Provider(siteKey),
+        );
+      } else {
+        debugPrint(
+          'SECURITY WARNING: Web App Check was not activated. '
+          'Build production web with --dart-define=APP_CHECK_WEB_RECAPTCHA_SITE_KEY=YOUR_SITE_KEY.',
+        );
+      }
+    } else if (defaultTargetPlatform == TargetPlatform.android) {
+      await FirebaseAppCheck.instance.activate(
+        androidProvider: kDebugMode
+            ? AndroidProvider.debug
+            : AndroidProvider.playIntegrity,
+      );
+    }
+
+    await FirebaseAppCheck.instance.setTokenAutoRefreshEnabled(true);
+    debugPrint('Firebase App Check initialized.');
+  } catch (e, stackTrace) {
+    // Keep the app launchable during setup; Firebase enforcement remains
+    // server-side and will reject unverified requests once enabled.
+    debugPrint('Firebase/App Check initialization warning: $e');
+    debugPrintStack(stackTrace: stackTrace);
   }
   runApp(const EngineeringDrawingCityApp());
 }
