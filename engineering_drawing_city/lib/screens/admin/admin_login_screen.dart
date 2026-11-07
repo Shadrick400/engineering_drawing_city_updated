@@ -401,6 +401,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                             label: const Text('Add Video Lesson'),
                             onPressed: () => _showAddVideoDialog(),
                           ),
+                          OutlinedButton.icon(
+                            icon: const Icon(Icons.video_library_outlined),
+                            label: const Text('Manage Videos'),
+                            onPressed: () => _tabController.animateTo(3),
+                          ),
                           ElevatedButton.icon(
                             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7C3AED)),
                             icon: const Icon(Icons.menu_book),
