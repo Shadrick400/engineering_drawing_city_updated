@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'package:engineering_drawing_city/firebase_options.dart';
 import 'package:engineering_drawing_city/models/course_model.dart';
+import 'package:engineering_drawing_city/models/video_model.dart';
 import 'package:engineering_drawing_city/screens/admin/admin_login_screen.dart';
 import 'package:engineering_drawing_city/screens/ai/ai_assistant_screen.dart';
 import 'package:engineering_drawing_city/screens/auth/forgot_password_screen.dart';
