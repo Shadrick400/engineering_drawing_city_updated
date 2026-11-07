@@ -969,7 +969,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                             errorBuilder: (context, error, stackTrace) => Container(
                               width: 88,
                               height: 58,
-                              color: AppTheme.lightGrey,
+                              color: AppTheme.accentCyanLight,
                               child: const Icon(Icons.ondemand_video),
                             ),
                           ),
