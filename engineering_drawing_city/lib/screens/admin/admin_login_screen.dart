@@ -269,6 +269,22 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
           ],
         ),
         actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.accentCyan,
+                foregroundColor: AppTheme.darkNavy,
+                visualDensity: VisualDensity.compact,
+              ),
+              icon: const Icon(Icons.video_library_outlined, size: 18),
+              label: const Text('Manage Videos'),
+              onPressed: () {
+                _tabController.animateTo(3);
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
           TextButton.icon(
             style: TextButton.styleFrom(foregroundColor: AppTheme.accentCyan),
             icon: const Icon(Icons.school, size: 18),
