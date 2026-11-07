@@ -16,9 +16,7 @@ import 'package:engineering_drawing_city/models/video_model.dart';
 class AuthService {
   static final AuthService _instance = AuthService._internal();
   factory AuthService() => _instance;
-  AuthService._internal() {
-    _initializeSeedUsers();
-  }
+  AuthService._internal();
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   static Future<void>? _googleSignInInitialization;
@@ -34,81 +32,17 @@ class AuthService {
   bool get isAdmin => _currentUser?.role == 'admin';
 
   final Map<String, UserModel> _usersDb = {};
-  void _initializeSeedUsers() {
-    // Seed student accounts with varying states including Terms & Conditions violations
-    final student1 = UserModel(
-      uid: 'student_01',
-      email: 'demo.student01@example.com',
-      name: 'Demo Student 01',
-      role: 'student',
-      year: 'Year 2',
-      program: 'Mechanical Engineering',
-      institution: 'Demo Institution',
-      phoneNumber: null,
-      isSuspended: false,
-      createdAt: DateTime.now().subtract(const Duration(days: 45)),
-      updatedAt: DateTime.now().subtract(const Duration(days: 10)),
-    );
-    _usersDb[student1.uid] = student1;
-    _usersDb[student1.email.toLowerCase()] = student1;
+  final StreamController<List<UserModel>> _usersStreamController =
+      StreamController<List<UserModel>>.broadcast();
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _usersSubscription;
 
-    final student2 = UserModel(
-      uid: 'student_02',
-      email: 'demo.student02@example.com',
-      name: 'Demo Student 02',
-      role: 'student',
-      year: 'Year 3',
-      program: 'Civil Engineering',
-      institution: 'Demo Institution',
-      phoneNumber: '',
-      isSuspended: true,
-      suspensionReason: 'Demo suspension state for testing.',
-      suspendedAt: DateTime.now().subtract(const Duration(days: 2)),
-      createdAt: DateTime.now().subtract(const Duration(days: 30)),
-      updatedAt: DateTime.now().subtract(const Duration(days: 2)),
-    );
-    _usersDb[student2.uid] = student2;
-    _usersDb[student2.email.toLowerCase()] = student2;
+  Stream<List<UserModel>> get usersStream => _usersStreamController.stream;
 
-    final student3 = UserModel(
-      uid: 'student_03',
-      email: 'demo.student03@example.com',
-      name: 'Demo Student 03',
-      role: 'student',
-      year: 'Year 1',
-      program: 'Electrical & Electronics',
-      institution: 'Demo Institution',
-      phoneNumber: '',
-      isSuspended: true,
-      suspensionReason: 'Demo suspension state for testing.',
-      suspendedAt: DateTime.now().subtract(const Duration(hours: 18)),
-      createdAt: DateTime.now().subtract(const Duration(days: 14)),
-      updatedAt: DateTime.now().subtract(const Duration(hours: 18)),
-    );
-    _usersDb[student3.uid] = student3;
-    _usersDb[student3.email.toLowerCase()] = student3;
-
-    final student4 = UserModel(
-      uid: 'student_04',
-      email: 'demo.student04@example.com',
-      name: 'Demo Student 04',
-      role: 'student',
-      year: 'Year 2',
-      program: 'Geomatic Engineering',
-      institution: 'Demo Institution',
-      phoneNumber: '',
-      isSuspended: false,
-      createdAt: DateTime.now().subtract(const Duration(days: 20)),
-      updatedAt: DateTime.now().subtract(const Duration(days: 5)),
-    );
-    _usersDb[student4.uid] = student4;
-    _usersDb[student4.email.toLowerCase()] = student4;
-
-    // No auto-login — users must sign in explicitly
-    _currentUser = null;
-    _userStreamController.add(null);
+  void _emitUsers() {
+    if (!_usersStreamController.isClosed) {
+      _usersStreamController.add(getAllUsers());
+    }
   }
-
   void setCurrentUser(UserModel? user) {
     _currentUser = user;
     if (user != null) {
@@ -116,6 +50,7 @@ class AuthService {
       _usersDb[user.email.toLowerCase()] = user;
     }
     _userStreamController.add(_currentUser);
+    _emitUsers();
   }
 
 Future<UserModel> signInWithEmailPassword({
@@ -198,6 +133,9 @@ Future<UserModel> signInWithEmailPassword({
 
     _currentUser = user;
     FirestoreService().watchSubscription(user.uid);
+    if (user.role == 'admin') {
+      await loadAllUsers();
+    }
 
     _usersDb[user.uid] = user;
     _usersDb[cleanEmail] = user;
@@ -515,20 +453,29 @@ Future<void> sendPasswordResetEmail(String email) async {
 
   /// Reactivate / Activate a suspended account (admin action)
   Future<void> reactivateAccount(String uid) async {
-    final user = _usersDb[uid];
-    if (user != null) {
-      final reactivated = user.copyWith(
-        isSuspended: false,
-        clearSuspensionReason: true,
-        updatedAt: DateTime.now(),
-      );
-      _usersDb[uid] = reactivated;
-      _usersDb[reactivated.email.toLowerCase()] = reactivated;
-      if (_currentUser?.uid == uid) {
-        _currentUser = reactivated;
-      }
-      _userStreamController.add(_currentUser);
+    final userRef = FirebaseFirestore.instance.collection('users').doc(uid);
+    final snapshot = await userRef.get();
+    if (!snapshot.exists || snapshot.data() == null) {
+      throw Exception('The student account could not be found in Firebase.');
     }
+
+    final user = UserModel.fromMap(uid, snapshot.data()!);
+    final reactivated = user.copyWith(
+      isSuspended: false,
+      clearSuspensionReason: true,
+      updatedAt: DateTime.now(),
+    );
+    await userRef.update({
+      'isSuspended': false,
+      'suspensionReason': FieldValue.delete(),
+      'suspendedAt': FieldValue.delete(),
+      'updatedAt': reactivated.updatedAt,
+    });
+    _usersDb[uid] = reactivated;
+    _usersDb[reactivated.email.toLowerCase()] = reactivated;
+    if (_currentUser?.uid == uid) _currentUser = reactivated;
+    _userStreamController.add(_currentUser);
+    _emitUsers();
   }
 
   /// Activate suspended user (alias for reactivateAccount)
@@ -536,21 +483,31 @@ Future<void> sendPasswordResetEmail(String email) async {
 
   /// Suspend a user account for Terms & Conditions breach (admin action)
   Future<void> suspendUser(String uid, {required String reason}) async {
-    final user = _usersDb[uid];
-    if (user != null) {
-      final suspended = user.copyWith(
-        isSuspended: true,
-        suspensionReason: reason,
-        suspendedAt: DateTime.now(),
-        updatedAt: DateTime.now(),
-      );
-      _usersDb[uid] = suspended;
-      _usersDb[suspended.email.toLowerCase()] = suspended;
-      if (_currentUser?.uid == uid) {
-        _currentUser = suspended;
-      }
-      _userStreamController.add(_currentUser);
+    final userRef = FirebaseFirestore.instance.collection('users').doc(uid);
+    final snapshot = await userRef.get();
+    if (!snapshot.exists || snapshot.data() == null) {
+      throw Exception('The student account could not be found in Firebase.');
     }
+
+    final user = UserModel.fromMap(uid, snapshot.data()!);
+    final now = DateTime.now();
+    final suspended = user.copyWith(
+      isSuspended: true,
+      suspensionReason: reason,
+      suspendedAt: now,
+      updatedAt: now,
+    );
+    await userRef.update({
+      'isSuspended': true,
+      'suspensionReason': reason,
+      'suspendedAt': now,
+      'updatedAt': now,
+    });
+    _usersDb[uid] = suspended;
+    _usersDb[suspended.email.toLowerCase()] = suspended;
+    if (_currentUser?.uid == uid) _currentUser = suspended;
+    _userStreamController.add(_currentUser);
+    _emitUsers();
   }
 
   Future<void> signOut() async {
@@ -567,6 +524,39 @@ Future<void> sendPasswordResetEmail(String email) async {
     try {
       await _auth.sendPasswordResetEmail(email: email.trim());
     } catch (_) {}
+  }
+
+  /// Load real student and administrator profiles from Firestore.
+  /// This replaces the old in-memory demo accounts.
+  Future<void> loadAllUsers() async {
+    final usersCollection = FirebaseFirestore.instance.collection('users');
+    final snapshot = await usersCollection.get();
+    _replaceCachedUsers(snapshot.docs);
+
+    // Keep the admin account list synchronized with Firebase changes made
+    // from another device or session.
+    _usersSubscription ??= usersCollection.snapshots().listen(
+      (liveSnapshot) => _replaceCachedUsers(liveSnapshot.docs),
+      onError: (Object error) {
+        debugPrint('Could not watch Firebase users: $error');
+      },
+    );
+  }
+
+  void _replaceCachedUsers(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> documents,
+  ) {
+    _usersDb.clear();
+    for (final document in documents) {
+      final user = UserModel.fromMap(document.id, document.data());
+      _usersDb[user.uid] = user;
+      _usersDb[user.email.toLowerCase()] = user;
+      if (_currentUser?.uid == user.uid) {
+        _currentUser = user;
+      }
+    }
+    _emitUsers();
+    _userStreamController.add(_currentUser);
   }
 
   /// Get all users (for admin)
@@ -668,46 +658,88 @@ class FirestoreService {
     final user = AuthService().currentUser;
     if (user == null || user.uid != userId) return;
     if (user.role != 'admin' && !hasActiveSubscription(userId)) return;
-    if (_premiumContentUserId == userId && _videosContentSubscription != null) return;
 
-    _stopPremiumContentListeners();
-    _premiumContentUserId = userId;
+    // Keep healthy listeners running. If one collection fails, it must not
+    // cancel the other premium-content listeners.
+    if (_premiumContentUserId != userId) {
+      _stopPremiumContentListeners();
+      _premiumContentUserId = userId;
+    }
 
-    _videosContentSubscription = _db.collection('videos').snapshots().listen((snapshot) {
-      final ids = snapshot.docs.map((doc) => doc.id).toSet();
-      _videos.removeWhere((id, _) => _remoteVideoIds.contains(id) && !ids.contains(id));
-      _remoteVideoIds
-        ..clear()
-        ..addAll(ids);
-      for (final doc in snapshot.docs) {
-        _videos[doc.id] = VideoModel.fromMap(doc.id, doc.data());
-      }
-      _videosController.add(getVideosSync());
-    }, onError: (_) => _stopPremiumContentListeners());
+    if (_videosContentSubscription == null) {
+      _videosContentSubscription =
+          _db.collection('videos').snapshots().listen((snapshot) {
+        final ids = snapshot.docs.map((doc) => doc.id).toSet();
+        _videos.removeWhere(
+            (id, _) => _remoteVideoIds.contains(id) && !ids.contains(id));
+        _remoteVideoIds
+          ..clear()
+          ..addAll(ids);
+        for (final doc in snapshot.docs) {
+          try {
+            _videos[doc.id] = VideoModel.fromMap(doc.id, doc.data());
+          } catch (error, stackTrace) {
+            debugPrint('Unable to parse video ${doc.id}: $error');
+            debugPrintStack(stackTrace: stackTrace);
+          }
+        }
+        _videosController.add(getVideosSync());
+      }, onError: (Object error, StackTrace stackTrace) {
+        debugPrint('Firestore videos listener failed: $error');
+        _videosContentSubscription?.cancel();
+        _videosContentSubscription = null;
+      });
+    }
 
-    _booksContentSubscription = _db.collection('books').snapshots().listen((snapshot) {
-      final ids = snapshot.docs.map((doc) => doc.id).toSet();
-      _books.removeWhere((id, _) => _remoteBookIds.contains(id) && !ids.contains(id));
-      _remoteBookIds
-        ..clear()
-        ..addAll(ids);
-      for (final doc in snapshot.docs) {
-        _books[doc.id] = BookModel.fromMap(doc.id, doc.data());
-      }
-      _booksController.add(getBooksSync());
-    }, onError: (_) => _stopPremiumContentListeners());
+    if (_booksContentSubscription == null) {
+      _booksContentSubscription =
+          _db.collection('books').snapshots().listen((snapshot) {
+        final ids = snapshot.docs.map((doc) => doc.id).toSet();
+        _books.removeWhere(
+            (id, _) => _remoteBookIds.contains(id) && !ids.contains(id));
+        _remoteBookIds
+          ..clear()
+          ..addAll(ids);
+        for (final doc in snapshot.docs) {
+          try {
+            _books[doc.id] = BookModel.fromMap(doc.id, doc.data());
+          } catch (error, stackTrace) {
+            debugPrint('Unable to parse book ${doc.id}: $error');
+            debugPrintStack(stackTrace: stackTrace);
+          }
+        }
+        _booksController.add(getBooksSync());
+      }, onError: (Object error, StackTrace stackTrace) {
+        debugPrint('Firestore books listener failed: $error');
+        _booksContentSubscription?.cancel();
+        _booksContentSubscription = null;
+      });
+    }
 
-    _pastPapersContentSubscription = _db.collection('past_papers').snapshots().listen((snapshot) {
-      final ids = snapshot.docs.map((doc) => doc.id).toSet();
-      _pastPapers.removeWhere((id, _) => _remotePastPaperIds.contains(id) && !ids.contains(id));
-      _remotePastPaperIds
-        ..clear()
-        ..addAll(ids);
-      for (final doc in snapshot.docs) {
-        _pastPapers[doc.id] = PastPaperModel.fromMap(doc.id, doc.data());
-      }
-      _pastPapersController.add(getPastPapersSync());
-    }, onError: (_) => _stopPremiumContentListeners());
+    if (_pastPapersContentSubscription == null) {
+      _pastPapersContentSubscription =
+          _db.collection('past_papers').snapshots().listen((snapshot) {
+        final ids = snapshot.docs.map((doc) => doc.id).toSet();
+        _pastPapers.removeWhere(
+            (id, _) => _remotePastPaperIds.contains(id) && !ids.contains(id));
+        _remotePastPaperIds
+          ..clear()
+          ..addAll(ids);
+        for (final doc in snapshot.docs) {
+          try {
+            _pastPapers[doc.id] = PastPaperModel.fromMap(doc.id, doc.data());
+          } catch (error, stackTrace) {
+            debugPrint('Unable to parse past paper ${doc.id}: $error');
+            debugPrintStack(stackTrace: stackTrace);
+          }
+        }
+        _pastPapersController.add(getPastPapersSync());
+      }, onError: (Object error, StackTrace stackTrace) {
+        debugPrint('Firestore past-papers listener failed: $error');
+        _pastPapersContentSubscription?.cancel();
+        _pastPapersContentSubscription = null;
+      });
+    }
   }
 
   void _stopPremiumContentListeners() {
@@ -742,7 +774,8 @@ class FirestoreService {
   }
 
   void _initializeSeedData() {
-    // 1. App Settings
+    // Keep only application defaults. Courses, videos, books, past papers,
+    // subscriptions, and payments must come from real Firestore records.
     _appSettings = AppSettingsModel(
       appName: 'Engineering Drawing City',
       logo: 'assets/images/logo.png',
@@ -756,234 +789,6 @@ class FirestoreService {
       contactInformation: 'Official support contact details pending confirmation.',
       maintenanceMode: false,
     );
-
-    // 2. Courses
-    final seedCourses = [
-      CourseModel(
-        id: 'course_01',
-        title: 'Fundamentals of Engineering Drawing',
-        description:
-            'Drawing instruments, standard sheet sizes (A0-A4), title blocks, line types, lettering, and plain & diagonal scales.',
-        imageUrl: '',
-        order: 1,
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 30)),
-        updatedAt: DateTime.now(),
-      ),
-      CourseModel(
-        id: 'course_02',
-        title: 'Orthographic Projections Masterclass',
-        description:
-            'First Angle and Third Angle projection rules, principal planes of projection, front/top/side views of solids and brackets.',
-        imageUrl: '',
-        order: 2,
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 28)),
-        updatedAt: DateTime.now(),
-      ),
-      CourseModel(
-        id: 'course_03',
-        title: 'Isometric & Axonometric Drawing',
-        description:
-            'Isometric axes at 30°, box construction method, 4-centre method for isometric circles and ellipses, oblique views.',
-        imageUrl: '',
-        order: 3,
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 25)),
-        updatedAt: DateTime.now(),
-      ),
-      CourseModel(
-        id: 'course_04',
-        title: 'Sectional Views & Conic Sections',
-        description:
-            'Cutting planes, full sections, half sections, offset sections, hatching conventions, and drawing ellipses and parabolas.',
-        imageUrl: '',
-        order: 4,
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 20)),
-        updatedAt: DateTime.now(),
-      ),
-      CourseModel(
-        id: 'course_05',
-        title: 'Machine Drawing, GD&T & CAD Essentials',
-        description:
-            'Thread profiles, bolts and nuts, limits, fits and tolerances, GD&T symbols, and introduction to 2D CAD drafting.',
-        imageUrl: '',
-        order: 5,
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 15)),
-        updatedAt: DateTime.now(),
-      ),
-    ];
-
-    for (var c in seedCourses) {
-      _courses[c.id] = c;
-    }
-
-    // 3. Videos
-    // Premium videos are loaded from protected Firestore records only after subscription/admin verification.
-
-
-    // 4. Seed Books
-    final seedBooks = [
-      BookModel(
-        id: 'book_01',
-        title: 'Engineering Drawing (N.D. Bhatt)',
-        author: 'N.D. Bhatt & V.M. Panchal',
-        description:
-            'The classic reference for engineering drawing covering all fundamentals, orthographic projections, and machine drawing in detail.',
-        courseId: 'course_01',
-        fileUrl: '',
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 60)),
-        updatedAt: DateTime.now(),
-      ),
-      BookModel(
-        id: 'book_02',
-        title: 'Engineering Graphics with AutoCAD',
-        author: 'James D. Bethune',
-        description:
-            'Integrates 2D and 3D CAD with traditional engineering graphics principles. Covers projections, sections, and GD&T.',
-        courseId: 'course_05',
-        fileUrl: '',
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 45)),
-        updatedAt: DateTime.now(),
-      ),
-      BookModel(
-        id: 'book_03',
-        title: 'Fundamentals of Technical Drawing',
-        author: 'Giesecke et al.',
-        description:
-            'Comprehensive textbook covering lines, lettering, geometric constructions, orthographic and isometric views.',
-        courseId: 'course_02',
-        fileUrl: '',
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 30)),
-        updatedAt: DateTime.now(),
-      ),
-    ];
-
-    for (var b in seedBooks) {
-      _books[b.id] = b;
-    }
-
-    // 5. Seed Past Papers
-    final seedPastPapers = [
-      PastPaperModel(
-        id: 'pp_01',
-        title: 'Test 1 – 2023 (Fundamentals)',
-        description: 'Drawing instruments, line types, and plain scales.',
-        year: '2023',
-        type: 'test1',
-        courseId: 'course_01',
-        fileUrl: '',
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 365)),
-        updatedAt: DateTime.now(),
-      ),
-      PastPaperModel(
-        id: 'pp_02',
-        title: 'Test 2 – 2023 (Projections)',
-        description: 'First and third angle projections problems.',
-        year: '2023',
-        type: 'test2',
-        courseId: 'course_02',
-        fileUrl: '',
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 350)),
-        updatedAt: DateTime.now(),
-      ),
-      PastPaperModel(
-        id: 'pp_03',
-        title: 'Sessional Exam – 2023',
-        description: 'Full course sessional examination covering all topics.',
-        year: '2023',
-        type: 'sessional',
-        courseId: 'course_01',
-        fileUrl: '',
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 330)),
-        updatedAt: DateTime.now(),
-      ),
-      PastPaperModel(
-        id: 'pp_04',
-        title: 'Test 1 – 2024 (Fundamentals)',
-        description: 'Drawing standards, title blocks, and lettering.',
-        year: '2024',
-        type: 'test1',
-        courseId: 'course_01',
-        fileUrl: '',
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 180)),
-        updatedAt: DateTime.now(),
-      ),
-      PastPaperModel(
-        id: 'pp_05',
-        title: 'Test 2 – 2024 (Isometric)',
-        description: 'Isometric box method and four-centre ellipse exercises.',
-        year: '2024',
-        type: 'test2',
-        courseId: 'course_03',
-        fileUrl: '',
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 165)),
-        updatedAt: DateTime.now(),
-      ),
-      PastPaperModel(
-        id: 'pp_06',
-        title: 'Sessional Exam – 2024',
-        description: 'Full sessional covering orthographic, isometric, and sectioning.',
-        year: '2024',
-        type: 'sessional',
-        courseId: 'course_02',
-        fileUrl: '',
-        isPublished: true,
-        createdAt: DateTime.now().subtract(const Duration(days: 140)),
-        updatedAt: DateTime.now(),
-      ),
-    ];
-
-    for (var pp in seedPastPapers) {
-      _pastPapers[pp.id] = pp;
-    }
-
-    // 6. Initial Subscriptions
-    final activeSub = SubscriptionModel(
-      id: 'sub_student_01',
-      userId: 'student_01',
-      status: 'active',
-      startDate: DateTime.now().subtract(const Duration(days: 5)),
-      expiryDate: DateTime.now().add(const Duration(days: 25)),
-      amount: 10.0,
-      paymentReference: 'MM-TXN-8849201',
-      approvedBy: 'admin_01',
-      createdAt: DateTime.now().subtract(const Duration(days: 5)),
-    );
-    _subscriptions[activeSub.userId] = activeSub;
-
-    // 7. Seed Payments
-    final pendingPayment = PaymentModel(
-      id: 'pay_001',
-      userId: 'student_01',
-      amount: 10.0,
-      paymentReference: 'MM-REF-9923841',
-      status: 'pending',
-      submittedAt: DateTime.now().subtract(const Duration(hours: 2)),
-    );
-    _payments[pendingPayment.id] = pendingPayment;
-
-    final approvedPayment = PaymentModel(
-      id: 'pay_002',
-      userId: 'student_01',
-      amount: 10.0,
-      paymentReference: 'MM-TXN-8849201',
-      status: 'approved',
-      submittedAt: DateTime.now().subtract(const Duration(days: 5)),
-      reviewedAt: DateTime.now().subtract(const Duration(days: 5)),
-      reviewedBy: 'admin_01',
-    );
-    _payments[approvedPayment.id] = approvedPayment;
   }
 
   // ================= USERS =================
@@ -1042,11 +847,54 @@ class FirestoreService {
   }
 
   Future<void> deleteCourse(String courseId) async {
+    // A course owns its learning materials. Remove those content documents
+    // together, but never touch users, subscriptions, or payment records.
+    final collections = ['videos', 'books', 'past_papers'];
+    final related = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+    for (final name in collections) {
+      final snapshot = await _db
+          .collection(name)
+          .where('courseId', isEqualTo: courseId)
+          .get();
+      related.addAll(snapshot.docs);
+    }
+
+    final documents = <DocumentReference<Map<String, dynamic>>>[
+      ...related.map((doc) => doc.reference),
+      _db.collection('courses').doc(courseId),
+    ];
+
+    // Firestore batches are limited to 500 writes.
+    for (var offset = 0; offset < documents.length; offset += 450) {
+      final batch = _db.batch();
+      for (final ref in documents.skip(offset).take(450)) {
+        batch.delete(ref);
+      }
+      await batch.commit();
+    }
+
     _courses.remove(courseId);
-    _coursesController.add(_courses.values.toList()..sort((a, b) => a.order.compareTo(b.order)));
-    try {
-      await _db.collection('courses').doc(courseId).delete();
-    } catch (_) {}
+    _remoteCourseIds.remove(courseId);
+    for (final doc in related) {
+      switch (doc.reference.parent.id) {
+        case 'videos':
+          _videos.remove(doc.id);
+          _remoteVideoIds.remove(doc.id);
+          break;
+        case 'books':
+          _books.remove(doc.id);
+          _remoteBookIds.remove(doc.id);
+          break;
+        case 'past_papers':
+          _pastPapers.remove(doc.id);
+          _remotePastPaperIds.remove(doc.id);
+          break;
+      }
+    }
+    _coursesController.add(getCoursesSync());
+    _videosController.add(getVideosSync());
+    _booksController.add(getBooksSync());
+    _pastPapersController.add(getPastPapersSync());
   }
 
   // ================= VIDEOS =================
@@ -1089,19 +937,20 @@ class FirestoreService {
   }
 
   Future<void> updateVideo(VideoModel video) async {
+    await _db.collection('videos').doc(video.id).update(video.toMap());
     _videos[video.id] = video;
-    _videosController.add(_videos.values.toList()..sort((a, b) => a.order.compareTo(b.order)));
-    try {
-      await _db.collection('videos').doc(video.id).update(video.toMap());
-    } catch (_) {}
+    _videosController.add(
+      _videos.values.toList()..sort((a, b) => a.order.compareTo(b.order)),
+    );
   }
 
   Future<void> deleteVideo(String videoId) async {
+    await _db.collection('videos').doc(videoId).delete();
     _videos.remove(videoId);
-    _videosController.add(_videos.values.toList()..sort((a, b) => a.order.compareTo(b.order)));
-    try {
-      await _db.collection('videos').doc(videoId).delete();
-    } catch (_) {}
+    _remoteVideoIds.remove(videoId);
+    _videosController.add(
+      _videos.values.toList()..sort((a, b) => a.order.compareTo(b.order)),
+    );
   }
 
   // ================= BOOKS =================
@@ -1112,12 +961,32 @@ class FirestoreService {
   }
 
   Stream<List<BookModel>> getBooks() {
-    final list = _books.values.toList();
-    return _booksController.stream.asBroadcastStream(
-      onListen: (sub) {
-        _booksController.add(list);
-      },
-    );
+    // Read the collection directly so every Books tab receives Firestore's
+    // initial snapshot, even if it opens after the app's other listeners.
+    // Firestore security rules still enforce admin/subscriber access.
+    return _db.collection('books').snapshots().map((snapshot) {
+      final ids = snapshot.docs.map((doc) => doc.id).toSet();
+      _books.removeWhere(
+        (id, _) => _remoteBookIds.contains(id) && !ids.contains(id),
+      );
+      _remoteBookIds
+        ..clear()
+        ..addAll(ids);
+
+      for (final document in snapshot.docs) {
+        try {
+          _books[document.id] =
+              BookModel.fromMap(document.id, document.data());
+        } catch (error, stackTrace) {
+          debugPrint('Unable to parse book ${document.id}: $error');
+          debugPrintStack(stackTrace: stackTrace);
+        }
+      }
+
+      final books = getBooksSync();
+      _booksController.add(books);
+      return books;
+    });
   }
 
   List<BookModel> getBooksSync() {
@@ -1129,19 +998,16 @@ class FirestoreService {
   }
 
   Future<void> updateBook(BookModel book) async {
+    await _db.collection('books').doc(book.id).update(book.toMap());
     _books[book.id] = book;
-    _booksController.add(_books.values.toList());
-    try {
-      await _db.collection('books').doc(book.id).update(book.toMap());
-    } catch (_) {}
+    _booksController.add(getBooksSync());
   }
 
   Future<void> deleteBook(String bookId) async {
+    await _db.collection('books').doc(bookId).delete();
     _books.remove(bookId);
-    _booksController.add(_books.values.toList());
-    try {
-      await _db.collection('books').doc(bookId).delete();
-    } catch (_) {}
+    _remoteBookIds.remove(bookId);
+    _booksController.add(getBooksSync());
   }
 
   // ================= PAST PAPERS =================
@@ -1151,14 +1017,7 @@ class FirestoreService {
     _pastPapersController.add(_pastPapers.values.toList());
   }
 
-  Stream<List<PastPaperModel>> getPastPapers() {
-    final list = _pastPapers.values.toList();
-    return _pastPapersController.stream.asBroadcastStream(
-      onListen: (sub) {
-        _pastPapersController.add(list);
-      },
-    );
-  }
+  Stream<List<PastPaperModel>> getPastPapers() => _pastPapersController.stream;
 
   List<PastPaperModel> getPastPapersSync() {
     return _pastPapers.values.toList();
@@ -1177,19 +1036,16 @@ class FirestoreService {
   }
 
   Future<void> updatePastPaper(PastPaperModel paper) async {
+    await _db.collection('past_papers').doc(paper.id).update(paper.toMap());
     _pastPapers[paper.id] = paper;
-    _pastPapersController.add(_pastPapers.values.toList());
-    try {
-      await _db.collection('past_papers').doc(paper.id).update(paper.toMap());
-    } catch (_) {}
+    _pastPapersController.add(getPastPapersSync());
   }
 
   Future<void> deletePastPaper(String paperId) async {
+    await _db.collection('past_papers').doc(paperId).delete();
     _pastPapers.remove(paperId);
-    _pastPapersController.add(_pastPapers.values.toList());
-    try {
-      await _db.collection('past_papers').doc(paperId).delete();
-    } catch (_) {}
+    _remotePastPaperIds.remove(paperId);
+    _pastPapersController.add(getPastPapersSync());
   }
 
   // ================= SUBSCRIPTIONS =================
@@ -1224,6 +1080,9 @@ class FirestoreService {
 
   void watchSubscription(String userId) {
     _listenToAppSettings();
+    // Admin access must not depend on a subscription query succeeding.
+    // Students are rechecked again when their subscription snapshot arrives.
+    _refreshPremiumContentAccess(userId);
     if (AuthService().currentUser?.role == 'admin' &&
         !_legacySubscriptionMigrationStarted) {
       _legacySubscriptionMigrationStarted = true;

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:engineering_drawing_city/models/book_model.dart';
 import 'package:engineering_drawing_city/models/course_model.dart';
 import 'package:engineering_drawing_city/models/past_paper_model.dart';
+import 'package:engineering_drawing_city/models/video_model.dart';
 import 'package:engineering_drawing_city/services/firebase_service.dart';
 import 'package:engineering_drawing_city/theme/app_theme.dart';
 
@@ -75,7 +76,7 @@ class _CoursesScreenState extends State<CoursesScreen>
     return Scaffold(
       backgroundColor: const Color(0xFFF4F7FB),
       appBar: AppBar(
-        title: const Text('Courses & Resources'),
+        title: const Text('Video Learning'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () {
@@ -119,7 +120,7 @@ class _CoursesScreenState extends State<CoursesScreen>
                 color: Colors.white,
                 child: TextField(
                   decoration: InputDecoration(
-                    hintText: 'Search videos, books, past papers...',
+                    hintText: 'Search video lessons and courses...',
                     prefixIcon: const Icon(Icons.search, color: AppTheme.primaryBlue),
                     suffixIcon: _searchQuery.isNotEmpty
                         ? IconButton(
@@ -204,6 +205,84 @@ class _LockedMaterialsNotice extends StatelessWidget {
   }
 }
 
+class _ComingSoonNotice extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String message;
+
+  const _ComingSoonNotice({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 88,
+                height: 88,
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryBlue.withOpacity(0.09),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: Icon(icon, size: 44, color: AppTheme.primaryBlue),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: AppTheme.darkNavy,
+                  fontSize: 21,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: AppTheme.textMuted,
+                  fontSize: 14,
+                  height: 1.55,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 9,
+                ),
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryBlue.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Text(
+                  'AVAILABLE SOON',
+                  style: TextStyle(
+                    color: AppTheme.primaryBlue,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // ─────────────────── VIDEOS TAB ───────────────────
 class _VideosTab extends StatefulWidget {
   final FirestoreService firestoreService;
@@ -272,14 +351,25 @@ class _VideosTabState extends State<_VideosTab> {
           );
         }
 
-        return ListView.builder(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
-          itemCount: filtered.length,
-          itemBuilder: (context, index) {
-            final course = filtered[index];
-            final videos =
-                widget.firestoreService.getVideosByCourseSync(course.id);
-            final isExpanded = _selectedCourseId == course.id;
+        return StreamBuilder<List<VideoModel>>(
+          stream: widget.firestoreService.getVideos(),
+          builder: (context, videoSnapshot) {
+            final allVideos =
+                videoSnapshot.data ?? widget.firestoreService.getVideosSync();
+
+            return ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+              itemCount: filtered.length,
+              itemBuilder: (context, index) {
+                final course = filtered[index];
+                final videos = allVideos
+                    .where((video) =>
+                        video.courseId == course.id &&
+                        video.isPublished &&
+                        video.youtubeVideoId.trim().isNotEmpty)
+                    .toList()
+                  ..sort((a, b) => a.order.compareTo(b.order));
+                final isExpanded = _selectedCourseId == course.id;
 
             return Card(
               margin: const EdgeInsets.only(bottom: 16),
@@ -512,6 +602,8 @@ class _VideosTabState extends State<_VideosTab> {
                 ],
               ),
             );
+              },
+            );
           },
         );
       },
@@ -535,86 +627,11 @@ class _BooksTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (isAdmin) return _buildBookList();
-    if (userId == null) {
-      return const _LockedMaterialsNotice(
-        title: 'Reference Books',
-        message: 'Please sign in to access the library.',
-      );
-    }
-    return StreamBuilder(
-      stream: firestoreService.getSubscription(userId!),
-      builder: (context, subscriptionSnapshot) {
-        final subscription = subscriptionSnapshot.data;
-        final hasAccess = subscription != null &&
-            subscription.status == 'active' &&
-            subscription.expiryDate.isAfter(DateTime.now());
-        if (!hasAccess) {
-          return const _LockedMaterialsNotice(
-            title: 'Reference Books',
-            message: 'An active subscription is required to read the full library.',
-          );
-        }
-        return _buildBookList();
-      },
-    );
-  }
-
-  Widget _buildBookList() {
-    return StreamBuilder<List<BookModel>>(
-      stream: firestoreService.getBooks(),
-      builder: (context, snapshot) {
-        final allBooks = snapshot.data ?? firestoreService.getBooksSync();
-        final filtered = allBooks.where((b) {
-          if (!b.isPublished || b.fileUrl.trim().isEmpty) return false;
-          if (searchQuery.isEmpty) return true;
-          return b.title.toLowerCase().contains(searchQuery) ||
-              b.author.toLowerCase().contains(searchQuery) ||
-              b.description.toLowerCase().contains(searchQuery);
-        }).toList()
-          ..sort((a, b) {
-            final courseOrder = _compareCourseIds(
-              firestoreService,
-              a.courseId,
-              b.courseId,
-            );
-            return courseOrder != 0 ? courseOrder : a.title.compareTo(b.title);
-          });
-
-        if (filtered.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.menu_book_outlined,
-                    size: 64, color: Colors.grey.shade300),
-                const SizedBox(height: 16),
-                const Text(
-                  'No books available yet',
-                  style: TextStyle(color: AppTheme.textMuted, fontSize: 16),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Books will be uploaded by the admin',
-                  style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
-                ),
-              ],
-            ),
-          );
-        }
-
-        return ListView.builder(
-          padding: const EdgeInsets.all(18),
-          itemCount: filtered.length,
-          itemBuilder: (context, index) {
-            final book = filtered[index];
-            return _BookCard(
-              book: book,
-              courseLabel: _courseLabelFor(firestoreService, book.courseId),
-            );
-          },
-        );
-      },
+    return const _ComingSoonNotice(
+      icon: Icons.menu_book_outlined,
+      title: 'Books Coming Soon',
+      message:
+          'We are preparing engineering drawing study books and reference materials. For now, explore the video lessons and learn directly from our YouTube lessons.',
     );
   }
 }
@@ -739,7 +756,7 @@ class _BookCard extends StatelessWidget {
 }
 
 // ─────────────────── PAST PAPERS TAB ───────────────────
-class _PastPapersTab extends StatefulWidget {
+class _PastPapersTab extends StatelessWidget {
   final FirestoreService firestoreService;
   final String searchQuery;
   final String? userId;
@@ -753,263 +770,13 @@ class _PastPapersTab extends StatefulWidget {
   });
 
   @override
-  State<_PastPapersTab> createState() => _PastPapersTabState();
-}
-
-class _PastPapersTabState extends State<_PastPapersTab> {
-  String? _selectedYear;
-
-  @override
   Widget build(BuildContext context) {
-    if (widget.isAdmin) return _buildPastPapers();
-    if (widget.userId == null) {
-      return const _LockedMaterialsNotice(
-        title: 'Past Examination Papers',
-        message: 'Please sign in to access past papers.',
-      );
-    }
-    return StreamBuilder(
-      stream: widget.firestoreService.getSubscription(widget.userId!),
-      builder: (context, subscriptionSnapshot) {
-        final subscription = subscriptionSnapshot.data;
-        final hasAccess = subscription != null &&
-            subscription.status == 'active' &&
-            subscription.expiryDate.isAfter(DateTime.now());
-        if (!hasAccess) {
-          return const _LockedMaterialsNotice(
-            title: 'Past Examination Papers',
-            message: 'An active subscription is required to view past papers.',
-          );
-        }
-        return _buildPastPapers();
-      },
+    return const _ComingSoonNotice(
+      icon: Icons.assignment_outlined,
+      title: 'Past Papers Coming Soon',
+      message:
+          'Past examination papers and practice questions are being prepared. In the meantime, use the video lessons to build your engineering drawing skills.',
     );
-  }
-
-  Widget _buildPastPapers() {
-    return StreamBuilder<List<PastPaperModel>>(
-      stream: widget.firestoreService.getPastPapers(),
-      builder: (context, snapshot) {
-        final allPapers =
-            snapshot.data ?? widget.firestoreService.getPastPapersSync();
-        final availableYears =
-            allPapers.map((paper) => paper.year).toSet().toList()
-              ..sort((a, b) => b.compareTo(a));
-        if (_selectedYear == null && availableYears.isNotEmpty) {
-          _selectedYear = availableYears.first;
-        }
-
-        final filtered = allPapers.where((pp) {
-          if (!pp.isPublished || pp.fileUrl.trim().isEmpty) return false;
-      if (widget.searchQuery.isNotEmpty) {
-        return pp.title.toLowerCase().contains(widget.searchQuery) ||
-            pp.description.toLowerCase().contains(widget.searchQuery) ||
-            pp.year.contains(widget.searchQuery);
-      }
-      return _selectedYear == null || pp.year == _selectedYear;
-    }).toList();
-
-    return Column(
-      children: [
-        // Year Filter Strip
-        if (availableYears.isNotEmpty)
-          Container(
-            color: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            child: Row(
-              children: [
-                const Text(
-                  'Year:',
-                  style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
-                      color: AppTheme.darkNavy),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: availableYears.map((year) {
-                        final isSelected = _selectedYear == year;
-                        return Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: FilterChip(
-                            label: Text(year),
-                            selected: isSelected,
-                            onSelected: (_) =>
-                                setState(() => _selectedYear = year),
-                            selectedColor:
-                                AppTheme.primaryBlue.withOpacity(0.15),
-                            checkmarkColor: AppTheme.primaryBlue,
-                            labelStyle: TextStyle(
-                              color: isSelected
-                                  ? AppTheme.primaryBlue
-                                  : AppTheme.textMuted,
-                              fontWeight: isSelected
-                                  ? FontWeight.bold
-                                  : FontWeight.normal,
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-        // Past Papers grouped by type
-        Expanded(
-          child: filtered.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.assignment_outlined,
-                          size: 64, color: Colors.grey.shade300),
-                      const SizedBox(height: 16),
-                      Text(
-                        availableYears.isEmpty
-                            ? 'No past papers uploaded yet'
-                            : 'No papers found for ${_selectedYear ?? "selected year"}',
-                        style: const TextStyle(
-                            color: AppTheme.textMuted, fontSize: 16),
-                      ),
-                    ],
-                  ),
-                )
-              : ListView(
-                  padding: const EdgeInsets.all(18),
-                  children: [
-                    if (widget.searchQuery.isEmpty && _selectedYear != null)
-                      _buildYearHeader(_selectedYear!),
-                    _buildPaperSection(
-                        'Test 1', 'test1', Icons.looks_one, filtered),
-                    _buildPaperSection(
-                        'Test 2', 'test2', Icons.looks_two, filtered),
-                    _buildPaperSection('Sessional Exam', 'sessional',
-                        Icons.school, filtered),
-                  ],
-                ),
-        ),
-      ],
-    );
-      },
-    );
-  }
-
-  Widget _buildYearHeader(String year) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [AppTheme.primaryBlue, AppTheme.darkNavy],
-        ),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.calendar_month, color: Colors.white, size: 28),
-          const SizedBox(width: 14),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Academic Year $year',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const Text(
-                'Test 1 • Test 2 • Sessional Exam',
-                style: TextStyle(color: Colors.white70, fontSize: 12),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPaperSection(String label, String type, IconData icon,
-      List<PastPaperModel> allFiltered) {
-    final papers = allFiltered.where((pp) => pp.type == type).toList()
-      ..sort((a, b) => _compareCourseIds(
-            widget.firestoreService,
-            a.courseId,
-            b.courseId,
-          ));
-    if (papers.isEmpty) return const SizedBox.shrink();
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 10, top: 6),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: _typeColor(type).withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(icon, color: _typeColor(type), size: 20),
-              ),
-              const SizedBox(width: 10),
-              Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: AppTheme.darkNavy,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: _typeColor(type).withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  '${papers.length}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: _typeColor(type),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        ...papers.map((pp) => _PastPaperCard(
-              paper: pp,
-              typeColor: _typeColor(type),
-              courseLabel: _courseLabelFor(widget.firestoreService, pp.courseId),
-            )),
-        const SizedBox(height: 12),
-      ],
-    );
-  }
-
-  Color _typeColor(String type) {
-    switch (type) {
-      case 'test1':
-        return const Color(0xFF2563EB);
-      case 'test2':
-        return const Color(0xFF7C3AED);
-      case 'sessional':
-        return const Color(0xFF059669);
-      default:
-        return AppTheme.primaryBlue;
-    }
   }
 }
 

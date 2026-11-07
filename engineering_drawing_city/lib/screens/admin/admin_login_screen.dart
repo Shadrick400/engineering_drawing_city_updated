@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:youtube_player_flutter/youtube_player_flutter.dart';
 
 import 'package:engineering_drawing_city/models/app_settings_model.dart';
@@ -6,7 +9,9 @@ import 'package:engineering_drawing_city/models/book_model.dart';
 import 'package:engineering_drawing_city/models/course_model.dart';
 import 'package:engineering_drawing_city/models/past_paper_model.dart';
 import 'package:engineering_drawing_city/models/payment_model.dart';
+import 'package:engineering_drawing_city/models/subscription_model.dart';
 import 'package:engineering_drawing_city/models/video_model.dart';
+import 'package:engineering_drawing_city/models/user_model.dart';
 import 'package:engineering_drawing_city/services/firebase_service.dart';
 import 'package:engineering_drawing_city/theme/app_theme.dart';
 
@@ -221,15 +226,31 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
   late TabController _tabController;
   final FirestoreService _firestoreService = FirestoreService();
   final AuthService _authService = AuthService();
+  StreamSubscription? _usersChangesSubscription;
+  final Set<String> _activatingUserIds = {};
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 8, vsync: this);
+    _tabController = TabController(length: 9, vsync: this);
+    final admin = _authService.currentUser;
+    if (admin != null) {
+      // Reassert admin content access whenever the dashboard is opened.
+      _firestoreService.watchSubscription(admin.uid);
+    }
+    _usersChangesSubscription = _authService.usersStream.listen((_) {
+      if (mounted) setState(() {});
+    });
+    // Fetch a fresh Firebase snapshot after the dashboard listener is ready.
+    // This prevents the initial users update from being lost by the broadcast stream.
+    unawaited(_authService.loadAllUsers().catchError((Object error) {
+      debugPrint('Unable to load admin student list: $error');
+    }));
   }
 
   @override
   void dispose() {
+    _usersChangesSubscription?.cancel();
     _tabController.dispose();
     super.dispose();
   }
@@ -248,6 +269,22 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
           ],
         ),
         actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.accentCyan,
+                foregroundColor: AppTheme.darkNavy,
+                visualDensity: VisualDensity.compact,
+              ),
+              icon: const Icon(Icons.video_library_outlined, size: 18),
+              label: const Text('Manage Videos'),
+              onPressed: () {
+                _tabController.animateTo(3);
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
           TextButton.icon(
             style: TextButton.styleFrom(foregroundColor: AppTheme.accentCyan),
             icon: const Icon(Icons.school, size: 18),
@@ -266,6 +303,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
             Tab(icon: Icon(Icons.dashboard_outlined), text: 'Overview'),
             Tab(icon: Icon(Icons.payments_outlined), text: 'Payments'),
             Tab(icon: Icon(Icons.auto_stories_outlined), text: 'Courses'),
+            Tab(icon: Icon(Icons.ondemand_video_outlined), text: 'Videos'),
             Tab(icon: Icon(Icons.menu_book_outlined), text: 'Books'),
             Tab(icon: Icon(Icons.assignment_outlined), text: 'Past Papers'),
             Tab(icon: Icon(Icons.people_outlined), text: 'Students'),
@@ -280,6 +318,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
           _buildOverviewTab(),
           _buildPaymentsTab(),
           _buildCoursesTab(),
+          _buildVideosTab(),
           _buildBooksTab(),
           _buildPastPapersTab(),
           _buildUsersTab(),
@@ -322,6 +361,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                   _buildStatCard('Video Lessons', '${videos.length}', Icons.ondemand_video, AppTheme.accentCyan),
                   _buildStatCard('Books', '${books.length}', Icons.auto_stories, const Color(0xFF7C3AED)),
                   _buildStatCard('Past Papers', '${papers.length}', Icons.assignment, const Color(0xFF059669)),
+                  StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                    stream: FirebaseFirestore.instance.collection('users').snapshots(),
+                    builder: (context, snapshot) {
+                      final registeredStudents = snapshot.hasData
+                          ? snapshot.data!.docs.where((doc) =>
+                              (doc.data()['role'] as String? ?? 'student') != 'admin').length
+                          : 0;
+                      return _buildStatCard(
+                        'Registered Students',
+                        snapshot.hasError ? '!' : '${snapshot.hasData ? registeredStudents : '...'}',
+                        Icons.people_alt_outlined,
+                        AppTheme.primaryBlue,
+                      );
+                    },
+                  ),
                   _buildStatCard('Pending Payments', '$pendingCount', Icons.pending_actions, Colors.orange),
                   _buildStatCard('Approved Passes', '$approvedCount', Icons.verified, AppTheme.successGreen),
                   if (suspendedCount > 0)
@@ -346,6 +400,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                         spacing: 12,
                         runSpacing: 12,
                         children: [
+                          OutlinedButton.icon(
+                            icon: const Icon(Icons.people_alt_outlined),
+                            label: const Text('Manage Students'),
+                            onPressed: () => _tabController.animateTo(6),
+                          ),
                           ElevatedButton.icon(
                             style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryBlue),
                             icon: const Icon(Icons.add_circle_outline),
@@ -357,6 +416,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                             icon: const Icon(Icons.video_call),
                             label: const Text('Add Video Lesson'),
                             onPressed: () => _showAddVideoDialog(),
+                          ),
+                          OutlinedButton.icon(
+                            icon: const Icon(Icons.video_library_outlined),
+                            label: const Text('Manage Videos'),
+                            onPressed: () => _tabController.animateTo(3),
                           ),
                           ElevatedButton.icon(
                             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF7C3AED)),
@@ -572,6 +636,53 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     );
   }
 
+  Future<bool> _confirmContentDeletion({
+    required String title,
+    required String message,
+  }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.errorRed),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete permanently'),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
+  Future<void> _deleteVideoFromAdmin(VideoModel video) async {
+    if (!await _confirmContentDeletion(
+      title: 'Delete video?',
+      message: '“${video.title}” will be removed from Firebase and from every student view. This cannot be undone.',
+    )) return;
+    try {
+      await _firestoreService.deleteVideo(video.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Deleted “${video.title}” from the learning library.')),
+        );
+        setState(() {});
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Video was not deleted: $error'), backgroundColor: AppTheme.errorRed),
+        );
+      }
+    }
+  }
+
   Widget _buildCoursesTab() {
     final courses = _firestoreService.getCoursesSync();
 
@@ -615,37 +726,66 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                   return Card(
                     elevation: 2,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.all(16),
-                      leading: CircleAvatar(
-                        backgroundColor: AppTheme.primaryBlue,
-                        child: Text('${c.order}', style: const TextStyle(color: Colors.white)),
-                      ),
-                      title: Text(c.title, style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text('${c.programme} • ${c.year} • ${c.semester}\n${c.description}\n(${videos.length} videos linked)'),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.edit_outlined, color: AppTheme.primaryBlue),
-                            tooltip: 'Edit programme, year, semester and topic',
-                            onPressed: () => _showEditCourseDialog(c),
+                    child: Column(
+                      children: [
+                        ListTile(
+                          contentPadding: const EdgeInsets.all(16),
+                          leading: CircleAvatar(
+                            backgroundColor: AppTheme.primaryBlue,
+                            child: Text('${c.order}', style: const TextStyle(color: Colors.white)),
                           ),
-                          IconButton(
-                            icon: const Icon(Icons.video_call, color: AppTheme.primaryBlue),
-                            tooltip: 'Add video to this course',
-                            onPressed: () => _showAddVideoDialog(preselectedCourseId: c.id),
+                          title: Text(c.title, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          subtitle: Text('${c.programme} • ${c.year} • ${c.semester}\n${c.description}\n(${videos.length} videos linked)'),
+                          trailing: Wrap(
+                            spacing: 2,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.edit_outlined, color: AppTheme.primaryBlue),
+                                tooltip: 'Edit course',
+                                onPressed: () => _showEditCourseDialog(c),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.video_call, color: AppTheme.primaryBlue),
+                                tooltip: 'Add video to this course',
+                                onPressed: () => _showAddVideoDialog(preselectedCourseId: c.id),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline, color: AppTheme.errorRed),
+                                tooltip: 'Delete course and its learning materials',
+                                onPressed: () async {
+                                  if (!await _confirmContentDeletion(
+                                    title: 'Delete course and its materials?',
+                                    message: 'This permanently deletes this course and all linked videos, books and past papers from Firebase and student views. User accounts, subscriptions and payment records are not affected.',
+                                  )) return;
+                                  try {
+                                    await _firestoreService.deleteCourse(c.id);
+                                    if (mounted) setState(() {});
+                                  } catch (error) {
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(content: Text('Course was not deleted: $error'), backgroundColor: AppTheme.errorRed),
+                                      );
+                                    }
+                                  }
+                                },
+                              ),
+                            ],
                           ),
-                          IconButton(
+                        ),
+                        if (videos.isNotEmpty) const Divider(height: 1),
+                        ...videos.map((video) => ListTile(
+                          dense: true,
+                          contentPadding: const EdgeInsets.only(left: 76, right: 12),
+                          leading: const Icon(Icons.play_circle_outline, color: AppTheme.primaryBlue),
+                          title: Text(video.title),
+                          subtitle: Text(video.youtubeVideoId),
+                          trailing: IconButton(
+                            tooltip: 'Delete video',
                             icon: const Icon(Icons.delete_outline, color: AppTheme.errorRed),
-                            tooltip: 'Delete Course',
-                            onPressed: () async {
-                              await _firestoreService.deleteCourse(c.id);
-                              setState(() {});
-                            },
+                            onPressed: () => _deleteVideoFromAdmin(video),
                           ),
-                        ],
-                      ),
+                        )),
+                      ],
                     ),
                   );
                 },
@@ -752,11 +892,130 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
   }
 
   // ══════════════════════ BOOKS TAB ══════════════════════
-  Widget _buildBooksTab() {
-    final books = _firestoreService.getBooksSync();
-    final courses = _firestoreService.getCoursesSync();
+  Widget _buildVideosTab() {
+    return StreamBuilder<List<VideoModel>>(
+      stream: _firestoreService.getVideos(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Text(
+              'Unable to load videos: ${snapshot.error}',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: AppTheme.errorRed),
+            ),
+          );
+        }
+        final videos = snapshot.data ?? _firestoreService.getVideosSync();
+        final courses = _firestoreService.getCoursesSync();
+        final courseNames = {for (final course in courses) course.id: course.title};
 
-    return SingleChildScrollView(
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1000),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Video Management',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.darkNavy,
+                          ),
+                        ),
+                      ),
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.accentCyan,
+                        ),
+                        icon: const Icon(Icons.add),
+                        label: const Text('Add Video'),
+                        onPressed: () => _showAddVideoDialog(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${videos.length} video lesson(s) in Firebase',
+                    style: const TextStyle(color: AppTheme.textMuted),
+                  ),
+                  const SizedBox(height: 16),
+                  if (videos.isEmpty)
+                    const Card(
+                      child: Padding(
+                        padding: EdgeInsets.all(28),
+                        child: Center(
+                          child: Text('No video lessons yet. Use Add Video to publish your first lesson.'),
+                        ),
+                      ),
+                    )
+                  else
+                    ...videos.map((video) => Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        leading: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.network(
+                            video.thumbnailUrl,
+                            width: 88,
+                            height: 58,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) => Container(
+                              width: 88,
+                              height: 58,
+                              color: AppTheme.accentCyanLight,
+                              child: const Icon(Icons.ondemand_video),
+                            ),
+                          ),
+                        ),
+                        title: Text(
+                          video.title,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        subtitle: Text(
+                          '${courseNames[video.courseId] ?? 'Course not found'} • ${video.isPublished ? 'Published' : 'Unpublished'}\nYouTube ID: ${video.youtubeVideoId}',
+                        ),
+                        isThreeLine: true,
+                        trailing: IconButton(
+                          tooltip: 'Delete this video',
+                          icon: const Icon(Icons.delete_outline, color: AppTheme.errorRed),
+                          onPressed: () => _deleteVideoFromAdmin(video),
+                        ),
+                      ),
+                    )),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildBooksTab() {
+    return StreamBuilder<List<BookModel>>(
+      stream: _firestoreService.getBooks(),
+      initialData: _firestoreService.getBooksSync(),
+      builder: (context, snapshot) {
+        final books = snapshot.data ?? const <BookModel>[];
+        final courses = _firestoreService.getCoursesSync();
+
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text('Unable to load books: ${snapshot.error}'),
+            ),
+          );
+        }
+
+        return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Center(
         child: ConstrainedBox(
@@ -831,8 +1090,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                               icon: const Icon(Icons.delete_outline, color: AppTheme.errorRed),
                               tooltip: 'Delete Book',
                               onPressed: () async {
-                                await _firestoreService.deleteBook(b.id);
-                                setState(() {});
+                                if (!await _confirmContentDeletion(
+                                  title: 'Delete book?',
+                                  message: '“${b.title}” will be permanently removed from Firebase and student views. User information and payment records will remain untouched.',
+                                )) return;
+                                try {
+                                  await _firestoreService.deleteBook(b.id);
+                                  if (mounted) setState(() {});
+                                } catch (error) {
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('Book was not deleted: $error'), backgroundColor: AppTheme.errorRed),
+                                    );
+                                  }
+                                }
                               },
                             ),
                           ],
@@ -844,16 +1115,32 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
             ],
           ),
         ),
-      ),
+        ),
+      );
+      },
     );
   }
 
   // ══════════════════════ PAST PAPERS TAB ══════════════════════
   Widget _buildPastPapersTab() {
-    final papers = _firestoreService.getPastPapersSync();
-    final years = _firestoreService.getAvailablePastPaperYears();
+    return StreamBuilder<List<PastPaperModel>>(
+      stream: _firestoreService.getPastPapers(),
+      initialData: _firestoreService.getPastPapersSync(),
+      builder: (context, snapshot) {
+        final papers = snapshot.data ?? const <PastPaperModel>[];
+        final years = papers.map((paper) => paper.year).toSet().toList()
+          ..sort((a, b) => b.compareTo(a));
 
-    return SingleChildScrollView(
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text('Unable to load past papers: ${snapshot.error}'),
+            ),
+          );
+        }
+
+        return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Center(
         child: ConstrainedBox(
@@ -922,7 +1209,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
             ],
           ),
         ),
-      ),
+        ),
+      );
+      },
     );
   }
 
@@ -952,8 +1241,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
         trailing: IconButton(
           icon: const Icon(Icons.delete_outline, color: AppTheme.errorRed),
           onPressed: () async {
-            await _firestoreService.deletePastPaper(pp.id);
-            setState(() {});
+            if (!await _confirmContentDeletion(
+              title: 'Delete past paper?',
+              message: '“${pp.title}” will be permanently removed from Firebase and student views. User information and payment records will remain untouched.',
+            )) return;
+            try {
+              await _firestoreService.deletePastPaper(pp.id);
+              if (mounted) setState(() {});
+            } catch (error) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Past paper was not deleted: $error'), backgroundColor: AppTheme.errorRed),
+                );
+              }
+            }
           },
         ),
       ),
@@ -961,8 +1262,111 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
   }
 
   // ══════════════════════ USERS TAB ══════════════════════
+  Future<void> _activateStudentWithOneMonthAccess(
+    UserModel user, {
+    bool reactivate = false,
+  }) async {
+    if (_activatingUserIds.contains(user.uid)) return;
+    setState(() => _activatingUserIds.add(user.uid));
+
+    try {
+      if (reactivate) {
+        await _authService.reactivateAccount(user.uid);
+      }
+
+      final admin = _authService.currentUser;
+      final now = DateTime.now();
+      await _firestoreService.activateSubscription(
+        userId: user.uid,
+        paymentReference: 'admin_granted_30_days_${now.millisecondsSinceEpoch}',
+        amount: 0,
+        approvedBy: admin?.email ?? admin?.uid ?? 'admin',
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${user.name} now has full learning access for 30 days.',
+          ),
+          backgroundColor: AppTheme.successGreen,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not activate ${user.name}: $error'),
+          backgroundColor: AppTheme.errorRed,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _activatingUserIds.remove(user.uid));
+      }
+    }
+  }
+
   Widget _buildUsersTab() {
-    final allUsers = _authService.getAllUsers().where((u) => u.role != 'admin').toList();
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      // Read the live Firebase users collection directly. This makes the
+      // dashboard independent of the AuthService in-memory cache.
+      stream: FirebaseFirestore.instance.collection('users').snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                'Unable to load users from Firebase. Check the admin account role and Firestore users read rules.\n\n${snapshot.error}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: AppTheme.errorRed),
+              ),
+            ),
+          );
+        }
+        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final allUsers = snapshot.data!.docs
+            .map((doc) => UserModel.fromMap(doc.id, doc.data()))
+            .where((user) => user.role != 'admin')
+            .toList()
+          ..sort((a, b) => (b.createdAt ?? DateTime(2000))
+              .compareTo(a.createdAt ?? DateTime(2000)));
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          // Read subscription records too, so every student's access badge
+          // reflects the real Firestore expiry rather than an empty local cache.
+          stream: FirebaseFirestore.instance.collection('subscriptions').snapshots(),
+          builder: (context, subscriptionSnapshot) {
+            if (subscriptionSnapshot.hasError) {
+              return Center(
+                child: Text(
+                  'Users loaded, but subscription status could not be read: ${subscriptionSnapshot.error}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: AppTheme.errorRed),
+                ),
+              );
+            }
+            final subscriptions = <String, SubscriptionModel>{};
+            for (final doc in subscriptionSnapshot.data?.docs ?? []) {
+              try {
+                subscriptions[doc.id] = SubscriptionModel.fromMap(doc.id, doc.data());
+              } catch (error) {
+                debugPrint('Unable to parse subscription ${doc.id}: $error');
+              }
+            }
+            return _buildActiveUsersList(allUsers, subscriptions);
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildActiveUsersList(
+    List<UserModel> allUsers,
+    Map<String, SubscriptionModel> subscriptions,
+  ) {
     final activeUsers = allUsers.where((u) => !u.isSuspended).toList();
     final suspendedCount = allUsers.where((u) => u.isSuspended).length;
 
@@ -1030,8 +1434,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                   separatorBuilder: (c, i) => const SizedBox(height: 10),
                   itemBuilder: (context, index) {
                     final u = activeUsers[index];
-                    final sub = _firestoreService.getSubscriptionSync(u.uid);
-                    final hasActiveSub = sub != null && sub.status == 'active';
+                    final sub = subscriptions[u.uid];
+                    final hasActiveSub = sub != null &&
+                        sub.status == 'active' &&
+                        sub.expiryDate.isAfter(DateTime.now());
 
                     return Card(
                       elevation: 2,
@@ -1096,17 +1502,50 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                               ),
                             ),
                             const SizedBox(width: 8),
-                            // Action
-                            OutlinedButton.icon(
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: AppTheme.errorRed,
-                                side: BorderSide(color: AppTheme.errorRed.withValues(alpha: 0.6)),
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                textStyle: const TextStyle(fontSize: 11),
-                              ),
-                              icon: const Icon(Icons.block, size: 14),
-                              label: const Text('Suspend'),
-                              onPressed: () => _showSuspendUserDialog(u.uid, u.name),
+                            // Admin can grant or renew a full 30-day pass directly.
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              alignment: WrapAlignment.end,
+                              children: [
+                                ElevatedButton.icon(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: AppTheme.successGreen,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                    textStyle: const TextStyle(fontSize: 11),
+                                  ),
+                                  icon: _activatingUserIds.contains(u.uid)
+                                      ? const SizedBox(
+                                          width: 14,
+                                          height: 14,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : const Icon(Icons.lock_open, size: 14),
+                                  label: Text(
+                                    _activatingUserIds.contains(u.uid)
+                                        ? 'Activating'
+                                        : 'Activate 30 days',
+                                  ),
+                                  onPressed: _activatingUserIds.contains(u.uid)
+                                      ? null
+                                      : () => _activateStudentWithOneMonthAccess(u),
+                                ),
+                                OutlinedButton.icon(
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: AppTheme.errorRed,
+                                    side: BorderSide(color: AppTheme.errorRed.withValues(alpha: 0.6)),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                    textStyle: const TextStyle(fontSize: 11),
+                                  ),
+                                  icon: const Icon(Icons.block, size: 14),
+                                  label: const Text('Suspend'),
+                                  onPressed: () => _showSuspendUserDialog(u.uid, u.name),
+                                ),
+                              ],
                             ),
                           ],
                         ),
@@ -1123,10 +1562,34 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
 
   // ══════════════════════ SUSPENDED USERS TAB ══════════════════════
   Widget _buildSuspendedUsersTab() {
-    final suspendedUsers = _authService.getAllUsers()
-        .where((u) => u.role != 'admin' && u.isSuspended)
-        .toList();
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance.collection('users').snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                'Unable to load suspended users from Firebase: ${snapshot.error}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: AppTheme.errorRed),
+              ),
+            ),
+          );
+        }
+        if (snapshot.connectionState == ConnectionState.waiting && !snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final suspendedUsers = snapshot.data!.docs
+            .map((doc) => UserModel.fromMap(doc.id, doc.data()))
+            .where((user) => user.role != 'admin' && user.isSuspended)
+            .toList();
+        return _buildSuspendedUsersList(suspendedUsers);
+      },
+    );
+  }
 
+  Widget _buildSuspendedUsersList(List<UserModel> suspendedUsers) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Center(
@@ -1365,40 +1828,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                                   ),
                                   icon: const Icon(Icons.check_circle_outline, size: 16),
                                   label: const Text('Activate Account'),
-                                  onPressed: () async {
-                                    final confirm = await showDialog<bool>(
-                                      context: context,
-                                      builder: (ctx) => AlertDialog(
-                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                                        title: const Text('Activate Account?'),
-                                        content: Text(
-                                          'Are you sure you want to reactivate ${u.name}\'s account? Their suspension record will be cleared.',
-                                        ),
-                                        actions: [
-                                          TextButton(
-                                            onPressed: () => Navigator.pop(ctx, false),
-                                            child: const Text('Cancel'),
+                                  onPressed: _activatingUserIds.contains(u.uid)
+                                      ? null
+                                      : () => _activateStudentWithOneMonthAccess(
+                                            u,
+                                            reactivate: true,
                                           ),
-                                          ElevatedButton(
-                                            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.successGreen),
-                                            onPressed: () => Navigator.pop(ctx, true),
-                                            child: const Text('Activate', style: TextStyle(color: Colors.white)),
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                    if (confirm == true) {
-                                      await _authService.reactivateAccount(u.uid);
-                                      setState(() {});
-                                      if (!mounted) return;
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(
-                                          content: Text('${u.name}\'s account has been reactivated.'),
-                                          backgroundColor: AppTheme.successGreen,
-                                        ),
-                                      );
-                                    }
-                                  },
                                 ),
                               ],
                             ),
@@ -1508,10 +1943,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                     createdAt: DateTime.now(),
                     updatedAt: DateTime.now(),
                   );
-                  await _firestoreService.saveBook(book);
-                  setState(() {});
+                  try {
+                    await _firestoreService.saveBook(book);
+                    if (!mounted) return;
+                    setState(() {});
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Book uploaded successfully.')),
+                    );
+                  } catch (error) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Could not upload book: $error')),
+                    );
+                  }
                 }
-                Navigator.pop(ctx);
               },
               child: const Text('Save Book', style: TextStyle(color: Colors.white)),
             ),
@@ -1626,10 +2072,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                     createdAt: DateTime.now(),
                     updatedAt: DateTime.now(),
                   );
-                  await _firestoreService.savePastPaper(paper);
-                  setState(() {});
+                  try {
+                    await _firestoreService.savePastPaper(paper);
+                    if (!mounted) return;
+                    setState(() {});
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Past paper uploaded successfully.')),
+                    );
+                  } catch (error) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Could not upload past paper: $error')),
+                    );
+                  }
                 }
-                Navigator.pop(ctx);
               },
               child: const Text('Save Paper', style: TextStyle(color: Colors.white)),
             ),
@@ -1877,10 +2334,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                     createdAt: DateTime.now(),
                     updatedAt: DateTime.now(),
                   );
-                  await _firestoreService.saveVideo(video);
-                  setState(() {});
+                  try {
+                    await _firestoreService.saveVideo(video);
+                    if (!mounted) return;
+                    setState(() {});
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Video lesson uploaded successfully.')),
+                    );
+                  } catch (error) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Could not upload video lesson: $error')),
+                    );
+                  }
                 }
-                Navigator.pop(ctx);
               },
               child: const Text('Save Lesson'),
             ),

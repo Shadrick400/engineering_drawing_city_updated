@@ -1,3 +1,12 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+DateTime _readFirestoreDate(dynamic value) {
+  if (value is Timestamp) return value.toDate();
+  if (value is DateTime) return value;
+  if (value is String) return DateTime.tryParse(value) ?? DateTime.now();
+  return DateTime.now();
+}
+
 /// Represents a reference book or study material available to students.
 class BookModel {
   final String id;
@@ -34,12 +43,8 @@ class BookModel {
       fileUrl: data['fileUrl'] ?? '',
       coverUrl: data['coverUrl'] ?? '',
       isPublished: data['isPublished'] ?? true,
-      createdAt: data['createdAt'] != null
-          ? DateTime.parse(data['createdAt'])
-          : DateTime.now(),
-      updatedAt: data['updatedAt'] != null
-          ? DateTime.parse(data['updatedAt'])
-          : DateTime.now(),
+      createdAt: _readFirestoreDate(data['createdAt']),
+      updatedAt: _readFirestoreDate(data['updatedAt']),
     );
   }
 

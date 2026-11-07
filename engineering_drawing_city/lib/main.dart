@@ -1,5 +1,8 @@
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:flutter/material.dart';
+
+import 'package:flutter/foundation.dart';
 
 import 'package:engineering_drawing_city/firebase_options.dart';
 import 'package:engineering_drawing_city/models/course_model.dart';
@@ -16,14 +19,30 @@ import 'package:engineering_drawing_city/screens/splash/splash_screen.dart';
 import 'package:engineering_drawing_city/screens/video/video_player_screen.dart';
 import 'package:engineering_drawing_city/theme/app_theme.dart';
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
   try {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
-  } catch (e) {
-    debugPrint('Firebase initialization notice: $e');
+
+    // Phase 1: secure the Android app only. Web App Check will be configured
+    // separately after Android has been tested and its debug token registered.
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      await FirebaseAppCheck.instance.activate(
+        androidProvider: kDebugMode
+            ? AndroidProvider.debug
+            : AndroidProvider.playIntegrity,
+      );
+      await FirebaseAppCheck.instance.setTokenAutoRefreshEnabled(true);
+      debugPrint('Firebase App Check initialized for Android.');
+    }
+  } catch (e, stackTrace) {
+    // Keep local development possible while App Check is being configured.
+    // Do not enable Firebase enforcement until Android tokens are verified.
+    debugPrint('Firebase/App Check initialization warning: $e');
+    debugPrintStack(stackTrace: stackTrace);
   }
   runApp(const EngineeringDrawingCityApp());
 }
@@ -75,18 +94,15 @@ class _EngineeringDrawingCityAppState extends State<EngineeringDrawingCityApp>
           } else if (args is VideoModel) {
             return VideoPlayerScreen(video: args);
           }
-          return VideoPlayerScreen(
-            video: VideoModel(
-              id: 'vid_01',
-              title: 'Drafting Instruments & Drawing Sheet Setup',
-              description: 'Complete breakdown of drafting instruments and standard layout.',
-              youtubeVideoId: 'WkL3SfvWz1U',
-              thumbnailUrl: '',
-              courseId: 'course_01',
-              order: 1,
-              isPublished: true,
-              createdAt: DateTime.now(),
-              updatedAt: DateTime.now(),
+          return const Scaffold(
+            body: Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text(
+                  'No video lesson was selected. Please choose a published lesson from Courses.',
+                  textAlign: TextAlign.center,
+                ),
+              ),
             ),
           );
         },
