@@ -613,6 +613,53 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     );
   }
 
+  Future<bool> _confirmContentDeletion({
+    required String title,
+    required String message,
+  }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.errorRed),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete permanently'),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true;
+  }
+
+  Future<void> _deleteVideoFromAdmin(VideoModel video) async {
+    if (!await _confirmContentDeletion(
+      title: 'Delete video?',
+      message: '“${video.title}” will be removed from Firebase and from every student view. This cannot be undone.',
+    )) return;
+    try {
+      await _firestoreService.deleteVideo(video.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Deleted “${video.title}” from the learning library.')),
+        );
+        setState(() {});
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Video was not deleted: $error'), backgroundColor: AppTheme.errorRed),
+        );
+      }
+    }
+  }
+
   Widget _buildCoursesTab() {
     final courses = _firestoreService.getCoursesSync();
 
@@ -656,37 +703,66 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                   return Card(
                     elevation: 2,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.all(16),
-                      leading: CircleAvatar(
-                        backgroundColor: AppTheme.primaryBlue,
-                        child: Text('${c.order}', style: const TextStyle(color: Colors.white)),
-                      ),
-                      title: Text(c.title, style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text('${c.programme} • ${c.year} • ${c.semester}\n${c.description}\n(${videos.length} videos linked)'),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.edit_outlined, color: AppTheme.primaryBlue),
-                            tooltip: 'Edit programme, year, semester and topic',
-                            onPressed: () => _showEditCourseDialog(c),
+                    child: Column(
+                      children: [
+                        ListTile(
+                          contentPadding: const EdgeInsets.all(16),
+                          leading: CircleAvatar(
+                            backgroundColor: AppTheme.primaryBlue,
+                            child: Text('${c.order}', style: const TextStyle(color: Colors.white)),
                           ),
-                          IconButton(
-                            icon: const Icon(Icons.video_call, color: AppTheme.primaryBlue),
-                            tooltip: 'Add video to this course',
-                            onPressed: () => _showAddVideoDialog(preselectedCourseId: c.id),
+                          title: Text(c.title, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          subtitle: Text('${c.programme} • ${c.year} • ${c.semester}\n${c.description}\n(${videos.length} videos linked)'),
+                          trailing: Wrap(
+                            spacing: 2,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.edit_outlined, color: AppTheme.primaryBlue),
+                                tooltip: 'Edit course',
+                                onPressed: () => _showEditCourseDialog(c),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.video_call, color: AppTheme.primaryBlue),
+                                tooltip: 'Add video to this course',
+                                onPressed: () => _showAddVideoDialog(preselectedCourseId: c.id),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline, color: AppTheme.errorRed),
+                                tooltip: 'Delete course and its learning materials',
+                                onPressed: () async {
+                                  if (!await _confirmContentDeletion(
+                                    title: 'Delete course and its materials?',
+                                    message: 'This permanently deletes this course and all linked videos, books and past papers from Firebase and student views. User accounts, subscriptions and payment records are not affected.',
+                                  )) return;
+                                  try {
+                                    await _firestoreService.deleteCourse(c.id);
+                                    if (mounted) setState(() {});
+                                  } catch (error) {
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(content: Text('Course was not deleted: $error'), backgroundColor: AppTheme.errorRed),
+                                      );
+                                    }
+                                  }
+                                },
+                              ),
+                            ],
                           ),
-                          IconButton(
+                        ),
+                        if (videos.isNotEmpty) const Divider(height: 1),
+                        ...videos.map((video) => ListTile(
+                          dense: true,
+                          contentPadding: const EdgeInsets.only(left: 76, right: 12),
+                          leading: const Icon(Icons.play_circle_outline, color: AppTheme.primaryBlue),
+                          title: Text(video.title),
+                          subtitle: Text(video.youtubeVideoId),
+                          trailing: IconButton(
+                            tooltip: 'Delete video',
                             icon: const Icon(Icons.delete_outline, color: AppTheme.errorRed),
-                            tooltip: 'Delete Course',
-                            onPressed: () async {
-                              await _firestoreService.deleteCourse(c.id);
-                              setState(() {});
-                            },
+                            onPressed: () => _deleteVideoFromAdmin(video),
                           ),
-                        ],
-                      ),
+                        )),
+                      ],
                     ),
                   );
                 },
@@ -885,8 +961,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                               icon: const Icon(Icons.delete_outline, color: AppTheme.errorRed),
                               tooltip: 'Delete Book',
                               onPressed: () async {
-                                await _firestoreService.deleteBook(b.id);
-                                setState(() {});
+                                if (!await _confirmContentDeletion(
+                                  title: 'Delete book?',
+                                  message: '“${b.title}” will be permanently removed from Firebase and student views. User information and payment records will remain untouched.',
+                                )) return;
+                                try {
+                                  await _firestoreService.deleteBook(b.id);
+                                  if (mounted) setState(() {});
+                                } catch (error) {
+                                  if (mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('Book was not deleted: $error'), backgroundColor: AppTheme.errorRed),
+                                    );
+                                  }
+                                }
                               },
                             ),
                           ],
@@ -1024,8 +1112,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
         trailing: IconButton(
           icon: const Icon(Icons.delete_outline, color: AppTheme.errorRed),
           onPressed: () async {
-            await _firestoreService.deletePastPaper(pp.id);
-            setState(() {});
+            if (!await _confirmContentDeletion(
+              title: 'Delete past paper?',
+              message: '“${pp.title}” will be permanently removed from Firebase and student views. User information and payment records will remain untouched.',
+            )) return;
+            try {
+              await _firestoreService.deletePastPaper(pp.id);
+              if (mounted) setState(() {});
+            } catch (error) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Past paper was not deleted: $error'), backgroundColor: AppTheme.errorRed),
+                );
+              }
+            }
           },
         ),
       ),
