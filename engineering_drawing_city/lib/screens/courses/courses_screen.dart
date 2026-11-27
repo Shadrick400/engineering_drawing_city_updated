@@ -508,7 +508,6 @@ class _VideosTabState extends State<_VideosTab> {
   }
 }
 
-// ─────────────────── BOOKS TAB ───────────────────
 class _PastPapersTab extends StatefulWidget {
   final FirestoreService firestoreService;
   final String searchQuery;
