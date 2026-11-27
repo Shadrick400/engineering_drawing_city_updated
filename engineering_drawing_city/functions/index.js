@@ -164,7 +164,7 @@ function secretsFor(provider) {
 
 exports.requestMobileMoneyPayment = onCall({
   secrets: [mtnCollectionKey, mtnApiUser, mtnApiKey, airtelClientId, airtelClientSecret],
-  enforceAppCheck: true,
+  enforceAppCheck: false,
 }, async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Sign in before paying.");
   const provider = String(request.data?.provider || "").toUpperCase();
@@ -181,7 +181,17 @@ exports.requestMobileMoneyPayment = onCall({
   // requestId returns this record and NEVER sends a second push request.
   const reservation = await db.runTransaction(async (tx) => {
     const existing = await tx.get(paymentRef);
-    if (existing.exists) return {existing: true, data: existing.data()};
+    if (existing.exists) return {existing: true, data: existing.data(), id: paymentId};
+    const outstandingQuery = db.collection("payments")
+      .where("userId", "==", request.auth.uid)
+      .where("paymentMethod", "==", "mobile_money_push")
+      .where("status", "==", "pending")
+      .limit(1);
+    const outstanding = await tx.get(outstandingQuery);
+    if (!outstanding.empty) {
+      const doc = outstanding.docs[0];
+      return {existing: true, data: doc.data(), id: doc.id};
+    }
     const data = {
       userId: request.auth.uid,
       amount: AMOUNT,
@@ -196,11 +206,11 @@ exports.requestMobileMoneyPayment = onCall({
       paymentMethod: "mobile_money_push",
     };
     tx.create(paymentRef, data);
-    return {existing: false, data};
+    return {existing: false, data, id: paymentId};
   });
 
   if (reservation.existing) {
-    return {paymentId, status: reservation.data.status || "pending", alreadyRequested: true};
+    return {paymentId: reservation.id, status: reservation.data.status || "pending", alreadyRequested: true};
   }
 
   try {
@@ -214,7 +224,7 @@ exports.requestMobileMoneyPayment = onCall({
     // duplicate charge.
     logger.error("Mobile-money initiation outcome uncertain", {paymentId, provider});
     await paymentRef.update({providerStatus: "unknown", initiationMessage: "Check payment status before retrying."});
-    throw new HttpsError("unavailable", "Payment request may be processing. Check its status before trying again.");
+    return {paymentId, status: "pending", alreadyRequested: false, message: "The request may be processing. Do not start another payment."};
   }
 });
 
