@@ -59,16 +59,19 @@ function paymentFields(p) {
     status: fsString(p.status), providerStatus: fsString(p.providerStatus), requestId: fsString(p.requestId),
     submittedAt: fsTimestamp(p.createdAt), paymentMethod: fsString("mobile_money_push") };
 }
-async function savePayment(env, p) {
-  await firestore(env, "payments/" + encodeURIComponent(p.id), "PATCH", { fields: paymentFields(p) });
+async function upsertDocument(env, collection, id, fields) {
+  const path = collection + "/" + encodeURIComponent(id);
+  try { await firestore(env, path); await firestore(env, path, "PATCH", { fields }); }
+  catch (_) { await firestore(env, collection + "?documentId=" + encodeURIComponent(id), "POST", { fields }); }
 }
+async function savePayment(env, p) { await upsertDocument(env, "payments", p.id, paymentFields(p)); }
 async function saveSubscription(env, uid, paymentId) {
   const now = new Date();
-  await firestore(env, "subscriptions/" + encodeURIComponent(uid), "PATCH", { fields: {
+  await upsertDocument(env, "subscriptions", uid, {
     userId: fsString(uid), status: fsString("active"), startDate: fsTimestamp(now),
     expiryDate: fsTimestamp(new Date(now.getTime() + 30 * 86400000)), amount: fsInt(50),
     paymentReference: fsString(paymentId), approvedBy: fsString("verified-provider"), createdAt: fsTimestamp(now),
-  }});
+  });
 }
 
 async function authenticate(request, env) {
@@ -168,8 +171,13 @@ export default {
         const requestId = String(data.requestId || "");
         if (!/^[A-Za-z0-9_-]{20,100}$/.test(requestId)) return fail("Invalid payment request.");
         const id = "mm_" + uid + "_" + requestId;
-        const existing = await env.PAYMENTS.prepare("SELECT * FROM payments WHERE user_id=? AND status='pending' ORDER BY created_at LIMIT 1").bind(uid).first();
-        if (existing) return json({ paymentId: existing.id, status: "pending", alreadyRequested: true });
+        const existingLock = await env.PAYMENTS.prepare("SELECT payment_id FROM user_locks WHERE user_id=?").bind(uid).first();
+        if (existingLock) return json({ paymentId: existingLock.payment_id, status: "pending", alreadyRequested: true });
+        const reserved = await env.PAYMENTS.prepare("INSERT OR IGNORE INTO user_locks (user_id,payment_id) VALUES (?,?)").bind(uid, id).run();
+        if (!reserved.meta.changes) {
+          const lock = await env.PAYMENTS.prepare("SELECT payment_id FROM user_locks WHERE user_id=?").bind(uid).first();
+          return json({ paymentId: lock?.payment_id || id, status: "pending", alreadyRequested: true });
+        }
         const p = { id, userId: uid, provider, providerReference: crypto.randomUUID(), phoneLast4: phone.slice(-4),
           requestId, status: "pending", providerStatus: "initiating", createdAt: new Date().toISOString() };
         const lock = await env.PAYMENTS.prepare("INSERT OR IGNORE INTO payments (id,user_id,provider,provider_ref,phone_last4,request_id,status,provider_status,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
@@ -207,6 +215,7 @@ export default {
           if (amount !== 50 || currency !== "ZMW") return fail("Provider confirmation did not match K50 ZMW. Payment is held for review.", 409);
           await saveSubscription(env, uid, id);
           await env.PAYMENTS.prepare("UPDATE payments SET status='approved',provider_status='successful' WHERE id=? AND user_id=? AND status='pending'").bind(id, uid).run();
+          await env.PAYMENTS.prepare("DELETE FROM user_locks WHERE user_id=? AND payment_id=?").bind(uid, id).run();
           await firestore(env, "payments/" + encodeURIComponent(id), "PATCH", { fields: {
             status: fsString("approved"), providerStatus: fsString("successful"), reviewedAt: fsTimestamp(new Date()), reviewedBy: fsString("verified-provider"),
           }});
@@ -214,6 +223,7 @@ export default {
         }
         if (status === "failed") {
           await env.PAYMENTS.prepare("UPDATE payments SET status='rejected',provider_status='failed' WHERE id=? AND user_id=? AND status='pending'").bind(id, uid).run();
+          await env.PAYMENTS.prepare("DELETE FROM user_locks WHERE user_id=? AND payment_id=?").bind(uid, id).run();
           await firestore(env, "payments/" + encodeURIComponent(id), "PATCH", { fields: { status: fsString("rejected"), providerStatus: fsString("failed") }});
           return json({ status: "rejected" });
         }
