@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import 'package:engineering_drawing_city/models/book_model.dart';
 import 'package:engineering_drawing_city/models/course_model.dart';
 import 'package:engineering_drawing_city/models/past_paper_model.dart';
 import 'package:engineering_drawing_city/services/firebase_service.dart';
@@ -61,7 +60,7 @@ class _CoursesScreenState extends State<CoursesScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 2, vsync: this);
   }
 
   @override
@@ -98,10 +97,6 @@ class _CoursesScreenState extends State<CoursesScreen>
               text: 'Videos',
             ),
             Tab(
-              icon: Icon(Icons.menu_book, size: 20),
-              text: 'Books',
-            ),
-            Tab(
               icon: Icon(Icons.assignment, size: 20),
               text: 'Past Papers',
             ),
@@ -119,7 +114,7 @@ class _CoursesScreenState extends State<CoursesScreen>
                 color: Colors.white,
                 child: TextField(
                   decoration: InputDecoration(
-                    hintText: 'Search videos, books, past papers...',
+                    hintText: 'Search videos and past papers...',
                     prefixIcon: const Icon(Icons.search, color: AppTheme.primaryBlue),
                     suffixIcon: _searchQuery.isNotEmpty
                         ? IconButton(
@@ -141,12 +136,6 @@ class _CoursesScreenState extends State<CoursesScreen>
                     _VideosTab(
                       firestoreService: _firestoreService,
                       searchQuery: _searchQuery,
-                    ),
-                    _BooksTab(
-                      firestoreService: _firestoreService,
-                      searchQuery: _searchQuery,
-                      userId: _authService.currentUser?.uid,
-                      isAdmin: _authService.isAdmin,
                     ),
                     _PastPapersTab(
                       firestoreService: _firestoreService,
@@ -520,225 +509,6 @@ class _VideosTabState extends State<_VideosTab> {
 }
 
 // ─────────────────── BOOKS TAB ───────────────────
-class _BooksTab extends StatelessWidget {
-  final FirestoreService firestoreService;
-  final String searchQuery;
-  final String? userId;
-  final bool isAdmin;
-
-  const _BooksTab({
-    required this.firestoreService,
-    required this.searchQuery,
-    required this.userId,
-    required this.isAdmin,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    if (isAdmin) return _buildBookList();
-    if (userId == null) {
-      return const _LockedMaterialsNotice(
-        title: 'Reference Books',
-        message: 'Please sign in to access the library.',
-      );
-    }
-    return StreamBuilder(
-      stream: firestoreService.getSubscription(userId!),
-      builder: (context, subscriptionSnapshot) {
-        final subscription = subscriptionSnapshot.data;
-        final hasAccess = subscription != null &&
-            subscription.status == 'active' &&
-            subscription.expiryDate.isAfter(DateTime.now());
-        if (!hasAccess) {
-          return const _LockedMaterialsNotice(
-            title: 'Reference Books',
-            message: 'An active subscription is required to read the full library.',
-          );
-        }
-        return _buildBookList();
-      },
-    );
-  }
-
-  Widget _buildBookList() {
-    return StreamBuilder<List<BookModel>>(
-      stream: firestoreService.getBooks(),
-      builder: (context, snapshot) {
-        final allBooks = snapshot.data ?? firestoreService.getBooksSync();
-        final filtered = allBooks.where((b) {
-          if (!b.isPublished || b.fileUrl.trim().isEmpty) return false;
-          if (searchQuery.isEmpty) return true;
-          return b.title.toLowerCase().contains(searchQuery) ||
-              b.author.toLowerCase().contains(searchQuery) ||
-              b.description.toLowerCase().contains(searchQuery);
-        }).toList()
-          ..sort((a, b) {
-            final courseOrder = _compareCourseIds(
-              firestoreService,
-              a.courseId,
-              b.courseId,
-            );
-            return courseOrder != 0 ? courseOrder : a.title.compareTo(b.title);
-          });
-
-        if (filtered.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.menu_book_outlined,
-                    size: 64, color: Colors.grey.shade300),
-                const SizedBox(height: 16),
-                const Text(
-                  'No books available yet',
-                  style: TextStyle(color: AppTheme.textMuted, fontSize: 16),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Books will be uploaded by the admin',
-                  style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
-                ),
-              ],
-            ),
-          );
-        }
-
-        return ListView.builder(
-          padding: const EdgeInsets.all(18),
-          itemCount: filtered.length,
-          itemBuilder: (context, index) {
-            final book = filtered[index];
-            return _BookCard(
-              book: book,
-              courseLabel: _courseLabelFor(firestoreService, book.courseId),
-            );
-          },
-        );
-      },
-    );
-  }
-}
-
-class _BookCard extends StatelessWidget {
-  final BookModel book;
-  final String courseLabel;
-  const _BookCard({required this.book, required this.courseLabel});
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 14),
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 64,
-              height: 80,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [AppTheme.primaryBlue, AppTheme.darkNavy],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(Icons.menu_book, color: Colors.white, size: 32),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    book.title,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.darkNavy,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      const Icon(Icons.person_outline,
-                          size: 14, color: AppTheme.textMuted),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          book.author,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppTheme.primaryBlue,
-                            fontWeight: FontWeight.w500,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    courseLabel,
-                    style: const TextStyle(
-                      fontSize: 10,
-                      color: AppTheme.primaryBlue,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    book.description,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: AppTheme.textMuted,
-                      height: 1.4,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.primaryBlue,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 8),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8)),
-                    ),
-                    icon: const Icon(Icons.menu_book, size: 16,
-                        color: Colors.white),
-                    label: const Text('Read Inside App',
-                        style: TextStyle(fontSize: 12, color: Colors.white)),
-                    onPressed: () {
-                      InAppDocumentViewer.show(
-                        context,
-                        title: book.title,
-                        subtitle: book.author,
-                        documentType: 'Book',
-                        fileUrl: book.fileUrl,
-                        authorOrYear: 'Author: ${book.author}',
-                        description: book.description,
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ─────────────────── PAST PAPERS TAB ───────────────────
 class _PastPapersTab extends StatefulWidget {
   final FirestoreService firestoreService;
   final String searchQuery;
