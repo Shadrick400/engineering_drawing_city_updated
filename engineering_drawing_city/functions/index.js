@@ -43,7 +43,9 @@ async function fetchJson(url, options = {}) {
     try { body = bodyText ? JSON.parse(bodyText) : {}; } catch (_) {}
     if (!response.ok) {
       logger.warn("Mobile-money provider returned an error", {status: response.status});
-      throw new Error("Payment provider could not process the request.");
+      const error = new Error("Payment provider could not process the request.");
+      error.status = response.status;
+      throw error;
     }
     return {status: response.status, body};
   } finally {
@@ -215,9 +217,16 @@ exports.requestMobileMoneyPayment = onCall({
     await paymentRef.update({providerStatus: "pending", requestAcceptedAt: admin.firestore.FieldValue.serverTimestamp()});
     return {paymentId, status: "pending", alreadyRequested: false};
   } catch (error) {
-    // Do not automatically retry an uncertain request: it could have reached
-    // the carrier. Keep it pending for reconciliation instead of risking a
-    // duplicate charge.
+    // Clear provider rejections did not create a wallet charge, so release
+    // the lock. Network timeouts and server errors are ambiguous and remain
+    // pending to avoid issuing a duplicate payment request.
+    if ([400, 401, 403, 422].includes(error.status)) {
+      await db.runTransaction(async (tx) => {
+        tx.update(paymentRef, {status: "rejected", providerStatus: "failed"});
+        tx.delete(pendingLockRef);
+      });
+      return {paymentId, status: "rejected", alreadyRequested: false};
+    }
     logger.error("Mobile-money initiation outcome uncertain", {paymentId, provider});
     await paymentRef.update({providerStatus: "unknown", initiationMessage: "Check payment status before retrying."});
     return {paymentId, status: "pending", alreadyRequested: false, message: "The request may be processing. Do not start another payment."};
