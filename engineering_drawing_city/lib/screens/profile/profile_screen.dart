@@ -464,7 +464,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: requesting ? null : () => Navigator.pop(dialogContext),
+              onPressed: () => Navigator.pop(dialogContext),
               child: const Text('Close'),
             ),
             if (paymentId != null && !requesting)
@@ -520,8 +520,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   paymentId = result.data['paymentId']?.toString();
                   if (paymentId == null) throw Exception('Payment request reference was not returned.');
                   setDialogState(() => message = 'Request sent once. Approve the K50 prompt on your phone.');
-                  for (var attempt = 0; attempt < 24; attempt++) {
-                    await Future<void>.delayed(const Duration(seconds: 5));
+                  for (var attempt = 0; attempt < 12; attempt++) {
+                    await Future<void>.delayed(const Duration(seconds: 10));
                     if (!dialogContext.mounted) return;
                     final statusResult = await functions.httpsCallable('refreshMobileMoneyPayment')
                         .call({'paymentId': paymentId});
