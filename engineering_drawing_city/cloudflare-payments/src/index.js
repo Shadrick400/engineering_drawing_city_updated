@@ -95,7 +95,7 @@ async function authenticate(request, env) {
   const data = await response.json();
   return data.users?.[0]?.localId || null;
 }
-function normalizePhone(value) {
+export function normalizePhone(value) {
   const digits = String(value || "").replace(/[\s()+-]/g, "");
   if (/^0[0-9]{9}$/.test(digits)) return "260" + digits.slice(1);
   if (/^260[0-9]{9}$/.test(digits)) return digits;
@@ -159,7 +159,7 @@ async function providerStatus(env, p) {
   })).body;
   return body?.data?.transaction || body?.transaction || body?.data || body;
 }
-function normalizeStatus(value) {
+export function normalizeStatus(value) {
   const s = String(value || "").toUpperCase();
   if (["SUCCESSFUL", "SUCCESS", "COMPLETED", "TS"].includes(s)) return "successful";
   if (["FAILED", "FAILURE", "REJECTED", "DECLINED", "EXPIRED", "CANCELLED"].includes(s)) return "failed";
