@@ -76,8 +76,8 @@ async function upsertDocument(env, collection, id, fields) {
   }
 }
 async function savePayment(env, p) { await upsertDocument(env, "payments", p.id, paymentFields(p)); }
-async function saveSubscription(env, uid, paymentId) {
-  const now = new Date();
+async function saveSubscription(env, uid, paymentId, approvedAt) {
+  const now = new Date(approvedAt);
   await upsertDocument(env, "subscriptions", uid, {
     userId: fsString(uid), status: fsString("active"), startDate: fsTimestamp(now),
     expiryDate: fsTimestamp(new Date(now.getTime() + 30 * 86400000)), amount: fsInt(50),
@@ -216,6 +216,10 @@ export default {
         const id = String(data.paymentId || "");
         const p = await env.PAYMENTS.prepare("SELECT * FROM payments WHERE id=? AND user_id=?").bind(id, uid).first();
         if (!p) return fail("Payment request not found.", 404);
+        if (p.status === "approved" && p.approved_at) {
+          await saveSubscription(env, uid, id, p.approved_at);
+          return json({ status: "approved" });
+        }
         if (p.status !== "pending") return json({ status: p.status });
         const payment = { id: p.id, userId: uid, provider: p.provider, providerReference: p.provider_ref,
           phoneLast4: p.phone_last4, requestId: p.request_id, status: p.status, providerStatus: p.provider_status, createdAt: p.created_at };
@@ -226,12 +230,14 @@ export default {
           const amount = Number(result.amount ?? result.transaction?.amount);
           const currency = String(result.currency ?? result.transaction?.currency ?? "").toUpperCase();
           if (amount !== 50 || currency !== "ZMW") return fail("Provider confirmation did not match K50 ZMW. Payment is held for review.", 409);
-          await saveSubscription(env, uid, id);
+          const approvedAt = p.approved_at || new Date().toISOString();
+          await env.PAYMENTS.prepare("UPDATE payments SET approved_at=COALESCE(approved_at,?) WHERE id=? AND user_id=?").bind(approvedAt, id, uid).run();
+          await saveSubscription(env, uid, id, approvedAt);
+          await firestore(env, "payments/" + encodeURIComponent(id), "PATCH", { fields: {
+            status: fsString("approved"), providerStatus: fsString("successful"), reviewedAt: fsTimestamp(approvedAt), reviewedBy: fsString("verified-provider"),
+          }});
           await env.PAYMENTS.prepare("UPDATE payments SET status='approved',provider_status='successful' WHERE id=? AND user_id=? AND status='pending'").bind(id, uid).run();
           await env.PAYMENTS.prepare("DELETE FROM user_locks WHERE user_id=? AND payment_id=?").bind(uid, id).run();
-          await firestore(env, "payments/" + encodeURIComponent(id), "PATCH", { fields: {
-            status: fsString("approved"), providerStatus: fsString("successful"), reviewedAt: fsTimestamp(new Date()), reviewedBy: fsString("verified-provider"),
-          }});
           return json({ status: "approved" });
         }
         if (status === "failed") {
