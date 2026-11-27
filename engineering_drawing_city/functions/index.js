@@ -104,15 +104,17 @@ async function checkMtnPayment(providerReference) {
 
 async function airtelToken() {
   const base = process.env.AIRTEL_API_BASE || "https://openapi.airtel.africa";
-  const auth = Buffer.from(airtelClientId.value() + ":" + airtelClientSecret.value()).toString("base64");
   const result = await fetchJson(base + "/auth/oauth2/token", {
     method: "POST",
     headers: {
-      "Authorization": "Basic " + auth,
       "Content-Type": "application/json",
       "Accept": "application/json",
     },
-    body: JSON.stringify({grant_type: "client_credentials"}),
+    body: JSON.stringify({
+      client_id: airtelClientId.value(),
+      client_secret: airtelClientSecret.value(),
+      grant_type: "client_credentials",
+    }),
   });
   if (!result.body.access_token) throw new Error("Airtel authentication failed.");
   return {token: result.body.access_token, base};
