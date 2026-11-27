@@ -171,6 +171,8 @@ export default {
         const requestId = String(data.requestId || "");
         if (!/^[A-Za-z0-9_-]{20,100}$/.test(requestId)) return fail("Invalid payment request.");
         const id = "mm_" + uid + "_" + requestId;
+        const prior = await env.PAYMENTS.prepare("SELECT * FROM payments WHERE id=? AND user_id=?").bind(id, uid).first();
+        if (prior) return json({ paymentId: prior.id, status: prior.status, alreadyRequested: true });
         const existingLock = await env.PAYMENTS.prepare("SELECT payment_id FROM user_locks WHERE user_id=?").bind(uid).first();
         if (existingLock) return json({ paymentId: existingLock.payment_id, status: "pending", alreadyRequested: true });
         const reserved = await env.PAYMENTS.prepare("INSERT OR IGNORE INTO user_locks (user_id,payment_id) VALUES (?,?)").bind(uid, id).run();
