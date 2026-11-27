@@ -1,0 +1,28 @@
+name: Cloudflare payments worker tests
+
+on:
+  push:
+    branches:
+      - feature/mobile-money-payments-zambia
+    - main
+    paths:
+      - "engineering_drawing_city/cloudflare-payments/**"
+  pull_request:
+    paths:
+      - "engineering_drawing_city/cloudflare-payments/**"
+
+jobs:
+  worker-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: engineering_drawing_city/cloudflare-payments
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run Worker unit tests
+        run: npm test
