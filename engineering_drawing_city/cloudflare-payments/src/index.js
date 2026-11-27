@@ -231,7 +231,19 @@ export default {
         if (!p) return fail("Payment request not found.", 404);
         if (p.status === "approved" && p.approved_at) {
           await saveSubscription(env, uid, id, p.approved_at);
+          await firestore(env, "payments/" + encodeURIComponent(id), "PATCH", { fields: {
+            status: fsString("approved"), providerStatus: fsString("successful"),
+            reviewedAt: fsTimestamp(p.approved_at), reviewedBy: fsString("verified-provider"),
+          }});
+          await env.PAYMENTS.prepare("DELETE FROM user_locks WHERE user_id=? AND payment_id=?").bind(uid, id).run();
           return json({ status: "approved" });
+        }
+        if (p.status === "rejected") {
+          await firestore(env, "payments/" + encodeURIComponent(id), "PATCH", { fields: {
+            status: fsString("rejected"), providerStatus: fsString("failed"),
+          }});
+          await env.PAYMENTS.prepare("DELETE FROM user_locks WHERE user_id=? AND payment_id=?").bind(uid, id).run();
+          return json({ status: "rejected" });
         }
         if (p.status !== "pending") return json({ status: p.status });
         const payment = { id: p.id, userId: uid, provider: p.provider, providerReference: p.provider_ref,
