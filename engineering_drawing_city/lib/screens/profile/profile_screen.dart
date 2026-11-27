@@ -378,9 +378,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Pay using Airtel Money or MTN MoMo. After sending payment, '
-                'submit the transaction ID for administrator verification. '
-                'Premium access activates only after verification.',
+                'Choose Airtel Money or MTN MoMo, enter your wallet number, '
+                'and tap Pay. Approve the prompt on your phone. Premium access '
+                'activates automatically after payment confirmation.',
                 style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
               ),
               const SizedBox(height: 14),
