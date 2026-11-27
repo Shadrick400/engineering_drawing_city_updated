@@ -201,13 +201,26 @@ export default {
         }
         try {
           await savePayment(env, p);
+        } catch (e) {
+          await env.PAYMENTS.prepare("DELETE FROM user_locks WHERE user_id=? AND payment_id=?").bind(uid, id).run();
+          await env.PAYMENTS.prepare("DELETE FROM payments WHERE id=?").bind(id).run();
+          throw e;
+        }
+        try {
           await startProvider(env, p, phone);
           p.providerStatus = "pending";
           await env.PAYMENTS.prepare("UPDATE payments SET provider_status=? WHERE id=?").bind("pending", id).run();
           return json({ paymentId: id, status: "pending", alreadyRequested: false });
         } catch (e) {
+          if ([400, 401, 403, 422].includes(e.status)) {
+            await env.PAYMENTS.prepare("UPDATE payments SET status='rejected',provider_status='failed' WHERE id=?").bind(id).run();
+            await env.PAYMENTS.prepare("DELETE FROM user_locks WHERE user_id=? AND payment_id=?").bind(uid, id).run();
+            await firestore(env, "payments/" + encodeURIComponent(id), "PATCH", { fields: { status: fsString("rejected"), providerStatus: fsString("failed") } });
+            return json({ paymentId: id, status: "rejected", message: "Provider declined the request." });
+          }
           p.providerStatus = "unknown";
           await env.PAYMENTS.prepare("UPDATE payments SET provider_status=? WHERE id=?").bind("unknown", id).run();
+          await firestore(env, "payments/" + encodeURIComponent(id), "PATCH", { fields: { providerStatus: fsString("unknown") } });
           return json({ paymentId: id, status: "pending", message: "Request outcome is uncertain. Do not initiate another payment." });
         }
       }
