@@ -1,0 +1,9 @@
+name = "engineering-drawing-city-payments"
+main = "src/index.js"
+compatibility_date = "2026-11-28"
+
+[[d1_databases]]
+binding = "PAYMENTS"
+database_name = "engineering-drawing-city-payments"
+database_id = "REPLACE_WITH_CREATED_D1_DATABASE_ID"
+migrations_dir = "migrations"
