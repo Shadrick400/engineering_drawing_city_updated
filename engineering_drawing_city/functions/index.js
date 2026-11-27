@@ -95,11 +95,11 @@ async function checkMtnPayment(providerReference) {
     method: "GET",
     headers: {
       "Authorization": "Bearer " + token,
-      "X-Target-Environment": process.env.MTN_TARGET_ENVIRONMENT || "production",
+      "X-Target-Environment": process.env.MTN_TARGET_ENVIRONMENT || "mtnzambia",
       "Ocp-Apim-Subscription-Key": mtnCollectionKey.value(),
     },
   });
-  return providerStatus(result.body.status);
+  return result.body;
 }
 
 async function airtelToken() {
@@ -143,7 +143,7 @@ async function startAirtelPayment(paymentId, providerReference, msisdn) {
 
 async function checkAirtelPayment(providerReference) {
   const {token, base} = await airtelToken();
-  const result = await fetchJson(base + "/standard/v1/payments/" + encodeURIComponent(paymentId), {
+  const result = await fetchJson(base + "/standard/v1/payments/" + encodeURIComponent(providerReference), {
     method: "GET",
     headers: {
       "Authorization": "Bearer " + token,
@@ -152,8 +152,7 @@ async function checkAirtelPayment(providerReference) {
       "X-Currency": CURRENCY,
     },
   });
-  const data = result.body?.data || result.body;
-  return providerStatus(data?.transaction?.status || data?.status || data?.transaction?.status_code);
+  return result.body?.data?.transaction || result.body?.transaction || result.body?.data || result.body;
 }
 
 exports.requestMobileMoneyPayment = onCall({
@@ -184,7 +183,6 @@ exports.requestMobileMoneyPayment = onCall({
       if (lockedPayment.exists && lockedPayment.data().status === "pending") {
         return {existing: true, data: lockedPayment.data(), id: lockedPayment.id};
       }
-      tx.delete(pendingLockRef);
     }
     const providerReference = crypto.randomUUID();
     const data = {
@@ -240,18 +238,34 @@ exports.refreshMobileMoneyPayment = onCall({
   if (payment.userId !== request.auth.uid) throw new HttpsError("permission-denied", "Payment owner mismatch.");
   if (payment.status === "approved" || payment.status === "rejected") return {status: payment.status};
   const provider = payment.provider;
-  let status = "pending";
+  let providerResult;
   try {
-    status = provider === "MTN" ? await checkMtnPayment(payment.providerReference) : await checkAirtelPayment(payment.providerReference);
+    providerResult = provider === "MTN"
+      ? await checkMtnPayment(payment.providerReference)
+      : await checkAirtelPayment(payment.providerReference);
   } catch (error) {
     logger.warn("Payment status check failed", {paymentId, provider});
     return {status: "pending"};
+  }
+  const transaction = provider === "MTN"
+    ? providerResult
+    : (providerResult?.transaction || providerResult);
+  const status = providerStatus(transaction?.status || transaction?.status_code);
+  if (status === "successful") {
+    const returnedAmount = Number(transaction?.amount);
+    const returnedCurrency = String(transaction?.currency || transaction?.currencyCode || "").toUpperCase();
+    const returnedReference = String(transaction?.externalId || transaction?.reference || transaction?.id || "");
+    const expectedReference = provider === "MTN" ? paymentId : payment.providerReference;
+    if (returnedAmount !== AMOUNT || returnedCurrency !== CURRENCY || returnedReference !== expectedReference) {
+      logger.error("Provider success did not match expected payment details", {paymentId, provider});
+      return {status: "pending"};
+    }
   }
 
   if (status === "successful") {
     await db.runTransaction(async (tx) => {
       const fresh = await tx.get(ref);
-      if (!fresh.exists || fresh.data().status === "approved") return;
+      if (!fresh.exists || fresh.data().status !== "pending") return;
       const now = admin.firestore.Timestamp.now();
       const subscriptionRef = db.collection("subscriptions").doc(request.auth.uid);
       tx.delete(db.collection("mobileMoneyPending").doc(request.auth.uid));
