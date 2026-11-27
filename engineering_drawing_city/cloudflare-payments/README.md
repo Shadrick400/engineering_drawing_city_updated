@@ -19,6 +19,16 @@ This is an integration draft, not a live payment service. Provider merchant onbo
 
 The service account must be dedicated to this Worker and have only the minimum Firestore permissions required. Never commit its JSON key, provider credentials, or `.dev.vars`. Rotate credentials if they are exposed. Do not use a project owner service account.
 
+## Local checks
+
+From this directory, run:
+
+```sh
+npm test
+```
+
+These initial Node tests cover phone normalization, provider status normalization, CORS preflight, HTTP method rejection, and the unauthenticated request boundary. They do not mock live Airtel/MTN APIs or prove production payment correctness.
+
 ## Endpoints
 
 - `POST /payments/initiate` with Firebase ID token and JSON `{provider, phone, requestId}`.
