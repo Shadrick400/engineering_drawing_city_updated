@@ -252,20 +252,10 @@ exports.refreshMobileMoneyPayment = onCall({
     : (providerResult?.transaction || providerResult);
   const status = providerStatus(transaction?.status || transaction?.status_code);
   if (status === "successful") {
-    const returnedAmount = Number(transaction?.amount);
-    const returnedCurrency = String(transaction?.currency || transaction?.currencyCode || "").toUpperCase();
-    const returnedReference = String(transaction?.externalId || transaction?.reference || transaction?.id || "");
-    const expectedReference = provider === "MTN" ? paymentId : payment.providerReference;
-    if (returnedAmount !== AMOUNT || returnedCurrency !== CURRENCY || returnedReference !== expectedReference) {
-      logger.error("Provider success did not match expected payment details", {paymentId, provider});
-      return {status: "pending"};
-    }
-  }
-
-  if (status === "successful") {
-    await db.runTransaction(async (tx) => {
+    const outcome = await db.runTransaction(async (tx) => {
       const fresh = await tx.get(ref);
-      if (!fresh.exists || fresh.data().status !== "pending") return;
+      if (!fresh.exists) return "pending";
+      if (fresh.data().status !== "pending") return fresh.data().status;
       const now = admin.firestore.Timestamp.now();
       const subscriptionRef = db.collection("subscriptions").doc(request.auth.uid);
       tx.delete(db.collection("mobileMoneyPending").doc(request.auth.uid));
@@ -285,15 +275,20 @@ exports.refreshMobileMoneyPayment = onCall({
         approvedBy: "verified-provider",
         createdAt: now,
       });
+      return "approved";
     });
-    return {status: "approved"};
+    return {status: outcome};
   }
   if (status === "failed") {
-    await db.runTransaction(async (tx) => {
+    const outcome = await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(ref);
+      if (!fresh.exists) return "pending";
+      if (fresh.data().status !== "pending") return fresh.data().status;
       tx.update(ref, {status: "rejected", providerStatus: "failed"});
       tx.delete(db.collection("mobileMoneyPending").doc(request.auth.uid));
+      return "rejected";
     });
-    return {status: "rejected"};
+    return {status: outcome};
   }
   await ref.update({providerStatus: "pending"});
   return {status: "pending"};
