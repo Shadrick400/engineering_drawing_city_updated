@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
 
 import 'package:engineering_drawing_city/models/payment_model.dart';
 import 'package:engineering_drawing_city/models/user_model.dart';
@@ -377,10 +380,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Secure mobile money checkout is being configured. '
-                'Payments are not being collected yet. Your account will unlock '
-                'premium materials after a successful payment is verified.',
+                'Choose Airtel Money or MTN MoMo, enter your wallet number, '
+                'and tap Pay. Approve the prompt on your phone. Premium access '
+                'activates automatically after payment confirmation.',
                 style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () => _showMobileMoneyPayment(user),
+                  icon: const Icon(Icons.account_balance_wallet_outlined),
+                  label: const Text('Pay subscription — K50'),
+                ),
               ),
             ],
           ],
@@ -389,6 +401,199 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+
+  Future<Map<String, dynamic>> _callPaymentApi(
+    String baseUrl,
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    if (baseUrl.trim().isEmpty) {
+      throw Exception('Payment service is not configured yet.');
+    }
+    final firebaseUser = FirebaseAuth.instance.currentUser;
+    if (firebaseUser == null) throw Exception('Please sign in again.');
+    final idToken = await firebaseUser.getIdToken();
+    if (idToken == null || idToken.isEmpty) throw Exception('Please sign in again.');
+    final endpoint = baseUrl.replaceFirst(RegExp(r'/+$'), '') + path;
+    final response = await http.post(
+      Uri.parse(endpoint),
+      headers: {
+        'Authorization': 'Bearer $idToken',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode(body),
+    ).timeout(const Duration(seconds: 30));
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Payment service returned an invalid response.');
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(decoded['error']?.toString() ?? 'Payment service request failed.');
+    }
+    return decoded;
+  }
+
+  Future<void> _showMobileMoneyPayment(UserModel user) async {
+    final phoneController = TextEditingController(text: user.phoneNumber ?? '');
+    String provider = 'AIRTEL';
+    bool requesting = false;
+    String? paymentId;
+    String message = 'Enter the number linked to your mobile-money wallet.';
+
+    const paymentApiBase = String.fromEnvironment('EDC_PAYMENT_API_URL');
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Pay K50 subscription'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('K50 gives you 30 days of premium access.'),
+                const SizedBox(height: 14),
+                DropdownButtonFormField<String>(
+                  value: provider,
+                  decoration: const InputDecoration(labelText: 'Mobile-money network'),
+                  items: const [
+                    DropdownMenuItem(value: 'AIRTEL', child: Text('Airtel Money')),
+                    DropdownMenuItem(value: 'MTN', child: Text('MTN MoMo')),
+                  ],
+                  onChanged: requesting || paymentId != null ? null : (value) {
+                    if (value != null) setDialogState(() => provider = value);
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: phoneController,
+                  enabled: !requesting && paymentId == null,
+                  keyboardType: TextInputType.phone,
+                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9+() -]'))],
+                  decoration: const InputDecoration(
+                    labelText: 'Mobile-money phone number',
+                    hintText: '0971234567',
+                    prefixIcon: Icon(Icons.phone_android),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryBlue.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Text(
+                    'When you tap Pay, we send one payment request. Approve it on your phone using your wallet PIN. Never type your PIN or OTP into this app.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(message, style: const TextStyle(fontSize: 12, color: AppTheme.textMuted)),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Close'),
+            ),
+            if (paymentId != null && !requesting)
+              TextButton(
+                onPressed: () async {
+                  setDialogState(() {
+                    requesting = true;
+                    message = 'Checking the existing payment request…';
+                  });
+                  try {
+                    final result = await _callPaymentApi(paymentApiBase, '/payments/status', {'paymentId': paymentId});
+                    final status = result['status']?.toString() ?? 'pending';
+                    if (status == 'approved') {
+                      if (dialogContext.mounted) Navigator.pop(dialogContext);
+                      if (mounted) {
+                        ScaffoldMessenger.of(this.context).showSnackBar(
+                          const SnackBar(content: Text('Payment confirmed. Premium access is active!')),
+                        );
+                      }
+                    } else {
+                      setDialogState(() {
+                        requesting = false;
+                        message = status == 'rejected'
+                            ? 'Payment was not completed. Start a new payment only after confirming no debit occurred.'
+                            : 'Still waiting for your wallet approval. Do not tap Pay again.';
+                      });
+                    }
+                  } catch (_) {
+                    setDialogState(() {
+                      requesting = false;
+                      message = 'Could not check status right now. Your existing request is saved; do not pay again.';
+                    });
+                  }
+                },
+                child: const Text('Check status'),
+              ),
+            ElevatedButton(
+              onPressed: requesting || paymentId != null ? null : () async {
+                final phone = phoneController.text.trim();
+                if (phone.isEmpty) {
+                  setDialogState(() => message = 'Enter your mobile-money number first.');
+                  return;
+                }
+                setDialogState(() {
+                  requesting = true;
+                  message = 'Sending one payment request to your phone…';
+                });
+                try {
+                  final requestId = 'edc_${user.uid}_${DateTime.now().microsecondsSinceEpoch}';
+                  final result = await _callPaymentApi(paymentApiBase, '/payments/initiate', {'provider': provider, 'phone': phone, 'requestId': requestId});
+                  paymentId = result['paymentId']?.toString();
+                  if (paymentId == null) throw Exception('Payment request reference was not returned.');
+                  setDialogState(() => message = 'Request sent once. Approve the K50 prompt on your phone.');
+                  for (var attempt = 0; attempt < 12; attempt++) {
+                    await Future<void>.delayed(const Duration(seconds: 10));
+                    if (!dialogContext.mounted) return;
+                    final statusResult = await _callPaymentApi(paymentApiBase, '/payments/status', {'paymentId': paymentId});
+                    final status = statusResult['status']?.toString() ?? 'pending';
+                    if (status == 'approved') {
+                      Navigator.pop(dialogContext);
+                      if (mounted) {
+                        ScaffoldMessenger.of(this.context).showSnackBar(
+                          const SnackBar(content: Text('Payment confirmed. Premium access is active!')),
+                        );
+                      }
+                      return;
+                    }
+                    if (status == 'rejected') {
+                      setDialogState(() {
+                        requesting = false;
+                        message = 'Payment was declined or expired. Check your wallet before starting another payment.';
+                      });
+                      return;
+                    }
+                  }
+                  setDialogState(() {
+                    requesting = false;
+                    message = 'Still pending. Your request was sent only once. Use Check status; do not tap Pay again.';
+                  });
+                } catch (_) {
+                  setDialogState(() {
+                    requesting = false;
+                    message = 'Payment request could not be confirmed. If a prompt arrived, use Check status and do not pay again.';
+                  });
+                }
+              },
+              child: requesting
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : Text(paymentId == null ? 'Pay K50' : 'Request already sent'),
+            ),
+          ],
+        ),
+      ),
+    );
+    phoneController.dispose();
+  }
 
   Widget _buildPaymentHistory(List<PaymentModel> payments) {
     return Card(
