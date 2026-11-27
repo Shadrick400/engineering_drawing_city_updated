@@ -41,12 +41,20 @@ async function googleAccessToken(env) {
 
 async function firestore(env, path, method = "GET", body = null) {
   const token = await googleAccessToken(env);
-  const url = "https://firestore.googleapis.com/v1/projects/" + env.FIREBASE_PROJECT_ID + "/databases/(default)/documents/" + path;
+  let url = "https://firestore.googleapis.com/v1/projects/" + env.FIREBASE_PROJECT_ID + "/databases/(default)/documents/" + path;
+  if (method === "PATCH" && body?.fields) {
+    const mask = Object.keys(body.fields).map(k => "updateMask.fieldPaths=" + encodeURIComponent(k)).join("&");
+    url += (url.includes("?") ? "&" : "?") + mask;
+  }
   const response = await fetch(url, {
     method, headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!response.ok) throw new Error("Firestore request failed (" + response.status + ")");
+  if (!response.ok) {
+    const error = new Error("Firestore request failed (" + response.status + ")");
+    error.status = response.status;
+    throw error;
+  }
   return response.status === 204 ? null : response.json();
 }
 
@@ -62,7 +70,10 @@ function paymentFields(p) {
 async function upsertDocument(env, collection, id, fields) {
   const path = collection + "/" + encodeURIComponent(id);
   try { await firestore(env, path); await firestore(env, path, "PATCH", { fields }); }
-  catch (_) { await firestore(env, collection + "?documentId=" + encodeURIComponent(id), "POST", { fields }); }
+  catch (error) {
+    if (error.status !== 404) throw error;
+    await firestore(env, collection + "?documentId=" + encodeURIComponent(id), "POST", { fields });
+  }
 }
 async function savePayment(env, p) { await upsertDocument(env, "payments", p.id, paymentFields(p)); }
 async function saveSubscription(env, uid, paymentId) {
