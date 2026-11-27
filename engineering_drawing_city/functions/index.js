@@ -170,29 +170,29 @@ exports.requestMobileMoneyPayment = onCall({
   }
   const paymentId = "mm_" + request.auth.uid + "_" + requestId;
   const paymentRef = db.collection("payments").doc(paymentId);
+  const pendingLockRef = db.collection("mobileMoneyPending").doc(request.auth.uid);
 
   // Reserve the payment before contacting the carrier. A retry with the same
   // requestId returns this record and NEVER sends a second push request.
   const reservation = await db.runTransaction(async (tx) => {
     const existing = await tx.get(paymentRef);
     if (existing.exists) return {existing: true, data: existing.data(), id: paymentId};
-    const outstandingQuery = db.collection("payments")
-      .where("userId", "==", request.auth.uid)
-      .limit(50);
-    const outstanding = await tx.get(outstandingQuery);
-    const pendingPush = outstanding.docs.find((doc) => {
-      const data = doc.data();
-      return data.paymentMethod === "mobile_money_push" && data.status === "pending";
-    });
-    if (pendingPush) {
-      return {existing: true, data: pendingPush.data(), id: pendingPush.id};
+    const lock = await tx.get(pendingLockRef);
+    if (lock.exists && lock.data().paymentId) {
+      const lockedPaymentRef = db.collection("payments").doc(lock.data().paymentId);
+      const lockedPayment = await tx.get(lockedPaymentRef);
+      if (lockedPayment.exists && lockedPayment.data().status === "pending") {
+        return {existing: true, data: lockedPayment.data(), id: lockedPayment.id};
+      }
+      tx.delete(pendingLockRef);
     }
+    const providerReference = crypto.randomUUID();
     const data = {
       userId: request.auth.uid,
       amount: AMOUNT,
       paymentReference: provider + " mobile-money push",
       provider,
-      providerReference: paymentId,
+      providerReference,
       phoneLast4: msisdn.slice(-4),
       status: "pending",
       providerStatus: "initiating",
@@ -201,6 +201,7 @@ exports.requestMobileMoneyPayment = onCall({
       paymentMethod: "mobile_money_push",
     };
     tx.create(paymentRef, data);
+    tx.set(pendingLockRef, {paymentId, createdAt: admin.firestore.FieldValue.serverTimestamp()});
     return {existing: false, data, id: paymentId};
   });
 
@@ -253,6 +254,7 @@ exports.refreshMobileMoneyPayment = onCall({
       if (!fresh.exists || fresh.data().status === "approved") return;
       const now = admin.firestore.Timestamp.now();
       const subscriptionRef = db.collection("subscriptions").doc(request.auth.uid);
+      tx.delete(db.collection("mobileMoneyPending").doc(request.auth.uid));
       tx.update(ref, {
         status: "approved",
         providerStatus: "successful",
@@ -273,7 +275,10 @@ exports.refreshMobileMoneyPayment = onCall({
     return {status: "approved"};
   }
   if (status === "failed") {
-    await ref.update({status: "rejected", providerStatus: "failed"});
+    await db.runTransaction(async (tx) => {
+      tx.update(ref, {status: "rejected", providerStatus: "failed"});
+      tx.delete(db.collection("mobileMoneyPending").doc(request.auth.uid));
+    });
     return {status: "rejected"};
   }
   await ref.update({providerStatus: "pending"});
