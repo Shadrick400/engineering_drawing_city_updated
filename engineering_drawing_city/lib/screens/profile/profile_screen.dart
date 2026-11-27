@@ -432,6 +432,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
     return decoded;
   }
+
   Future<void> _showMobileMoneyPayment(UserModel user) async {
     final phoneController = TextEditingController(text: user.phoneNumber ?? '');
     String provider = 'AIRTEL';
@@ -576,7 +577,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     requesting = false;
                     message = 'Still pending. Your request was sent only once. Use Check status; do not tap Pay again.';
                   });
-                } catch (error) {
+                } catch (_) {
                   setDialogState(() {
                     requesting = false;
                     message = 'Payment request could not be confirmed. If a prompt arrived, use Check status and do not pay again.';
