@@ -53,7 +53,7 @@ async function fetchJson(url, options = {}) {
 
 async function mtnToken() {
   const auth = Buffer.from(mtnApiUser.value() + ":" + mtnApiKey.value()).toString("base64");
-  const base = process.env.MTN_API_BASE || "https://momodeveloper.mtn.com";
+  const base = process.env.MTN_API_BASE || "https://proxy.momoapi.mtn.com";
   const result = await fetchJson(base + "/collection/token/", {
     method: "POST",
     headers: {
@@ -67,7 +67,7 @@ async function mtnToken() {
 
 async function startMtnPayment(paymentId, msisdn) {
   const {token, base} = await mtnToken();
-  const target = process.env.MTN_TARGET_ENVIRONMENT || "production";
+  const target = process.env.MTN_TARGET_ENVIRONMENT || "mtnzambia";
   const result = await fetchJson(base + "/collection/v1_0/requesttopay", {
     method: "POST",
     headers: {
@@ -184,13 +184,14 @@ exports.requestMobileMoneyPayment = onCall({
     if (existing.exists) return {existing: true, data: existing.data(), id: paymentId};
     const outstandingQuery = db.collection("payments")
       .where("userId", "==", request.auth.uid)
-      .where("paymentMethod", "==", "mobile_money_push")
-      .where("status", "==", "pending")
-      .limit(1);
+      .limit(50);
     const outstanding = await tx.get(outstandingQuery);
-    if (!outstanding.empty) {
-      const doc = outstanding.docs[0];
-      return {existing: true, data: doc.data(), id: doc.id};
+    const pendingPush = outstanding.docs.find((doc) => {
+      const data = doc.data();
+      return data.paymentMethod === "mobile_money_push" && data.status === "pending";
+    });
+    if (pendingPush) {
+      return {existing: true, data: pendingPush.data(), id: pendingPush.id};
     }
     const data = {
       userId: request.auth.uid,
