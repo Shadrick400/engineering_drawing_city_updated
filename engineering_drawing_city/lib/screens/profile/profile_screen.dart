@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 import 'package:engineering_drawing_city/models/payment_model.dart';
 import 'package:engineering_drawing_city/models/user_model.dart';
@@ -399,139 +400,177 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
 
-    Future<void> _showMobileMoneyPayment(UserModel user) async {
-    const airtelNumber = '0969262568';
-    const mtnNumber = '0777365872';
-    String provider = 'Airtel Money';
-    final referenceController = TextEditingController();
-    bool submitting = false;
+  Future<void> _showMobileMoneyPayment(UserModel user) async {
+    final phoneController = TextEditingController(text: user.phoneNumber ?? '');
+    String provider = 'AIRTEL';
+    bool requesting = false;
+    String? paymentId;
+    String message = 'Enter the number linked to your mobile-money wallet.';
+
+    final functions = FirebaseFunctions.instanceFor(region: 'africa-south1');
 
     await showDialog<void>(
       context: context,
+      barrierDismissible: false,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Mobile Money Payment'),
+          title: const Text('Pay K50 subscription'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Subscription fee: K50 for 30 days'),
-                const SizedBox(height: 12),
+                const Text('K50 gives you 30 days of premium access.'),
+                const SizedBox(height: 14),
                 DropdownButtonFormField<String>(
                   value: provider,
-                  decoration: const InputDecoration(labelText: 'Payment network'),
+                  decoration: const InputDecoration(labelText: 'Mobile-money network'),
                   items: const [
-                    DropdownMenuItem(value: 'Airtel Money', child: Text('Airtel Money')),
-                    DropdownMenuItem(value: 'MTN MoMo', child: Text('MTN MoMo')),
+                    DropdownMenuItem(value: 'AIRTEL', child: Text('Airtel Money')),
+                    DropdownMenuItem(value: 'MTN', child: Text('MTN MoMo')),
                   ],
-                  onChanged: submitting ? null : (value) {
+                  onChanged: requesting || paymentId != null ? null : (value) {
                     if (value != null) setDialogState(() => provider = value);
                   },
                 ),
                 const SizedBox(height: 12),
-                const Text('Send K50 to this number using your mobile money menu:'),
-                const SizedBox(height: 8),
+                TextField(
+                  controller: phoneController,
+                  enabled: !requesting && paymentId == null,
+                  keyboardType: TextInputType.phone,
+                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9+() -]'))],
+                  decoration: const InputDecoration(
+                    labelText: 'Mobile-money phone number',
+                    hintText: '0971234567',
+                    prefixIcon: Icon(Icons.phone_android),
+                  ),
+                ),
+                const SizedBox(height: 12),
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: AppTheme.primaryBlue.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Row(
-                    children: [
-                      Expanded(child: Text(
-                        provider == 'Airtel Money' ? airtelNumber : mtnNumber,
-                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                      )),
-                      IconButton(
-                        tooltip: 'Copy number',
-                        icon: const Icon(Icons.copy),
-                        onPressed: () async {
-                          final number = provider == 'Airtel Money' ? airtelNumber : mtnNumber;
-                          await Clipboard.setData(ClipboardData(text: number));
-                          if (dialogContext.mounted) {
-                            ScaffoldMessenger.of(dialogContext).showSnackBar(
-                              const SnackBar(content: Text('Payment number copied')),
-                            );
-                          }
-                        },
-                      ),
-                    ],
+                  child: const Text(
+                    'When you tap Pay, we send one payment request. Approve it on your phone using your wallet PIN. Never type your PIN or OTP into this app.',
+                    style: TextStyle(fontSize: 12),
                   ),
                 ),
                 const SizedBox(height: 12),
-                const Text('After transfer, enter the transaction ID from your confirmation message.'),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: referenceController,
-                  enabled: !submitting,
-                  textCapitalization: TextCapitalization.characters,
-                  decoration: const InputDecoration(
-                    labelText: 'Mobile Money transaction ID',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Text('Payment stays pending until verified. Never enter your PIN or OTP.',
-                    style: TextStyle(fontSize: 11, color: AppTheme.textMuted)),
+                Text(message, style: const TextStyle(fontSize: 12, color: AppTheme.textMuted)),
               ],
             ),
           ),
           actions: [
             TextButton(
-              onPressed: submitting ? null : () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
+              onPressed: requesting ? null : () => Navigator.pop(dialogContext),
+              child: const Text('Close'),
             ),
+            if (paymentId != null && !requesting)
+              TextButton(
+                onPressed: () async {
+                  setDialogState(() {
+                    requesting = true;
+                    message = 'Checking the existing payment request…';
+                  });
+                  try {
+                    final result = await functions.httpsCallable('refreshMobileMoneyPayment')
+                        .call({'paymentId': paymentId});
+                    final status = result.data['status']?.toString() ?? 'pending';
+                    if (status == 'approved') {
+                      if (dialogContext.mounted) Navigator.pop(dialogContext);
+                      if (mounted) {
+                        ScaffoldMessenger.of(this.context).showSnackBar(
+                          const SnackBar(content: Text('Payment confirmed. Premium access is active!')),
+                        );
+                      }
+                    } else {
+                      setDialogState(() {
+                        requesting = false;
+                        message = status == 'rejected'
+                            ? 'Payment was not completed. Start a new payment only after confirming no debit occurred.'
+                            : 'Still waiting for your wallet approval. Do not tap Pay again.';
+                      });
+                    }
+                  } catch (_) {
+                    setDialogState(() {
+                      requesting = false;
+                      message = 'Could not check status right now. Your existing request is saved; do not pay again.';
+                    });
+                  }
+                },
+                child: const Text('Check status'),
+              ),
             ElevatedButton(
-              onPressed: submitting ? null : () async {
-                final transactionId = referenceController.text.trim();
-                if (transactionId.length < 4) {
-                  ScaffoldMessenger.of(dialogContext).showSnackBar(
-                    const SnackBar(content: Text('Enter the transaction ID from your confirmation.')),
-                  );
+              onPressed: requesting || paymentId != null ? null : () async {
+                final phone = phoneController.text.trim();
+                if (phone.isEmpty) {
+                  setDialogState(() => message = 'Enter your mobile-money number first.');
                   return;
                 }
-                setDialogState(() => submitting = true);
+                setDialogState(() {
+                  requesting = true;
+                  message = 'Sending one payment request to your phone…';
+                });
                 try {
-                  final payment = PaymentModel(
-                    id: 'pay_${user.uid}_${DateTime.now().microsecondsSinceEpoch}',
-                    userId: user.uid,
-                    amount: 50.0,
-                    paymentReference: '$provider: $transactionId',
-                    status: 'pending',
-                    submittedAt: DateTime.now(),
-                  );
-                  await _firestoreService.savePayment(payment);
-                  if (!dialogContext.mounted) return;
-                  Navigator.pop(dialogContext);
-                  if (mounted) {
-                    ScaffoldMessenger.of(this.context).showSnackBar(
-                      const SnackBar(content: Text('Payment submitted for verification.')),
-                    );
-                    setState(() {});
+                  final requestId = 'edc_${user.uid}_${DateTime.now().microsecondsSinceEpoch}';
+                  final result = await functions.httpsCallable('requestMobileMoneyPayment')
+                      .call({'provider': provider, 'phone': phone, 'requestId': requestId});
+                  paymentId = result.data['paymentId']?.toString();
+                  if (paymentId == null) throw Exception('Payment request reference was not returned.');
+                  setDialogState(() => message = 'Request sent once. Approve the K50 prompt on your phone.');
+                  for (var attempt = 0; attempt < 24; attempt++) {
+                    await Future<void>.delayed(const Duration(seconds: 5));
+                    if (!dialogContext.mounted) return;
+                    final statusResult = await functions.httpsCallable('refreshMobileMoneyPayment')
+                        .call({'paymentId': paymentId});
+                    final status = statusResult.data['status']?.toString() ?? 'pending';
+                    if (status == 'approved') {
+                      Navigator.pop(dialogContext);
+                      if (mounted) {
+                        ScaffoldMessenger.of(this.context).showSnackBar(
+                          const SnackBar(content: Text('Payment confirmed. Premium access is active!')),
+                        );
+                      }
+                      return;
+                    }
+                    if (status == 'rejected') {
+                      setDialogState(() {
+                        requesting = false;
+                        message = 'Payment was declined or expired. Check your wallet before starting another payment.';
+                      });
+                      return;
+                    }
                   }
+                  setDialogState(() {
+                    requesting = false;
+                    message = 'Still pending. Your request was sent only once. Use Check status; do not tap Pay again.';
+                  });
+                } on FirebaseFunctionsException catch (error) {
+                  setDialogState(() {
+                    requesting = false;
+                    message = error.message ?? 'Payment could not be started. If a prompt arrived, do not retry yet.';
+                  });
                 } catch (error) {
-                  setDialogState(() => submitting = false);
-                  if (dialogContext.mounted) {
-                    ScaffoldMessenger.of(dialogContext).showSnackBar(
-                      SnackBar(content: Text('Could not submit payment: $error')),
-                    );
-                  }
+                  setDialogState(() {
+                    requesting = false;
+                    message = 'Payment request could not be confirmed. If a prompt arrived, use Check status and do not pay again.';
+                  });
                 }
               },
-              child: submitting
+              child: requesting
                   ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('I have paid'),
+                  : Text(paymentId == null ? 'Pay K50' : 'Request already sent'),
             ),
           ],
         ),
       ),
     );
-    referenceController.dispose();
+    phoneController.dispose();
   }
 
-Widget _buildPaymentHistory(List<PaymentModel> payments) {
+  Widget _buildPaymentHistory(List<PaymentModel> payments) {
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
