@@ -65,14 +65,14 @@ async function mtnToken() {
   return {token: result.body.access_token, base};
 }
 
-async function startMtnPayment(paymentId, msisdn) {
+async function startMtnPayment(paymentId, providerReference, msisdn) {
   const {token, base} = await mtnToken();
   const target = process.env.MTN_TARGET_ENVIRONMENT || "mtnzambia";
   const result = await fetchJson(base + "/collection/v1_0/requesttopay", {
     method: "POST",
     headers: {
       "Authorization": "Bearer " + token,
-      "X-Reference-Id": paymentId,
+      "X-Reference-Id": providerReference,
       "X-Target-Environment": target,
       "Ocp-Apim-Subscription-Key": mtnCollectionKey.value(),
       "Content-Type": "application/json",
@@ -89,9 +89,9 @@ async function startMtnPayment(paymentId, msisdn) {
   if (result.status !== 202) throw new Error("MTN did not accept the payment request.");
 }
 
-async function checkMtnPayment(paymentId) {
+async function checkMtnPayment(providerReference) {
   const {token, base} = await mtnToken();
-  const result = await fetchJson(base + "/collection/v1_0/requesttopay/" + encodeURIComponent(paymentId), {
+  const result = await fetchJson(base + "/collection/v1_0/requesttopay/" + encodeURIComponent(providerReference), {
     method: "GET",
     headers: {
       "Authorization": "Bearer " + token,
@@ -118,7 +118,7 @@ async function airtelToken() {
   return {token: result.body.access_token, base};
 }
 
-async function startAirtelPayment(paymentId, msisdn) {
+async function startAirtelPayment(paymentId, providerReference, msisdn) {
   const {token, base} = await airtelToken();
   const result = await fetchJson(base + "/merchant/v1/payments/", {
     method: "POST",
@@ -130,9 +130,9 @@ async function startAirtelPayment(paymentId, msisdn) {
       "X-Currency": CURRENCY,
     },
     body: JSON.stringify({
-      reference: paymentId,
+      reference: providerReference,
       subscriber: {country: "ZM", currency: CURRENCY, msisdn},
-      transaction: {amount: AMOUNT, country: "ZM", currency: CURRENCY, id: paymentId},
+      transaction: {amount: AMOUNT, country: "ZM", currency: CURRENCY, id: providerReference},
     }),
   });
   const code = result.body?.data?.transaction?.status_code;
@@ -141,7 +141,7 @@ async function startAirtelPayment(paymentId, msisdn) {
   }
 }
 
-async function checkAirtelPayment(paymentId) {
+async function checkAirtelPayment(providerReference) {
   const {token, base} = await airtelToken();
   const result = await fetchJson(base + "/standard/v1/payments/" + encodeURIComponent(paymentId), {
     method: "GET",
@@ -154,12 +154,6 @@ async function checkAirtelPayment(paymentId) {
   });
   const data = result.body?.data || result.body;
   return providerStatus(data?.transaction?.status || data?.status || data?.transaction?.status_code);
-}
-
-function secretsFor(provider) {
-  return provider === "MTN"
-    ? [mtnCollectionKey, mtnApiUser, mtnApiKey]
-    : [airtelClientId, airtelClientSecret];
 }
 
 exports.requestMobileMoneyPayment = onCall({
@@ -215,8 +209,8 @@ exports.requestMobileMoneyPayment = onCall({
   }
 
   try {
-    if (provider === "MTN") await startMtnPayment(paymentId, msisdn);
-    else await startAirtelPayment(paymentId, msisdn);
+    if (provider === "MTN") await startMtnPayment(paymentId, reservation.data.providerReference, msisdn);
+    else await startAirtelPayment(paymentId, reservation.data.providerReference, msisdn);
     await paymentRef.update({providerStatus: "pending", requestAcceptedAt: admin.firestore.FieldValue.serverTimestamp()});
     return {paymentId, status: "pending", alreadyRequested: false};
   } catch (error) {
@@ -231,7 +225,7 @@ exports.requestMobileMoneyPayment = onCall({
 
 exports.refreshMobileMoneyPayment = onCall({
   secrets: [mtnCollectionKey, mtnApiUser, mtnApiKey, airtelClientId, airtelClientSecret],
-  enforceAppCheck: true,
+  enforceAppCheck: false,
 }, async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Sign in to check your payment.");
   const paymentId = String(request.data?.paymentId || "");
@@ -247,7 +241,7 @@ exports.refreshMobileMoneyPayment = onCall({
   const provider = payment.provider;
   let status = "pending";
   try {
-    status = provider === "MTN" ? await checkMtnPayment(paymentId) : await checkAirtelPayment(paymentId);
+    status = provider === "MTN" ? await checkMtnPayment(payment.providerReference) : await checkAirtelPayment(payment.providerReference);
   } catch (error) {
     logger.warn("Payment status check failed", {paymentId, provider});
     return {status: "pending"};
