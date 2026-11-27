@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
 
 import 'package:engineering_drawing_city/models/payment_model.dart';
 import 'package:engineering_drawing_city/models/user_model.dart';
@@ -400,14 +402,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
 
-  Future<void> _showMobileMoneyPayment(UserModel user) async {
+  Future<Map<String, dynamic>> _callPaymentApi(
+    String baseUrl,
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    if (baseUrl.trim().isEmpty) {
+      throw Exception('Payment service is not configured yet.');
+    }
+    final firebaseUser = FirebaseAuth.instance.currentUser;
+    if (firebaseUser == null) throw Exception('Please sign in again.');
+    final idToken = await firebaseUser.getIdToken();
+    if (idToken == null || idToken.isEmpty) throw Exception('Please sign in again.');
+    final response = await http.post(
+      Uri.parse('${baseUrl.replaceFirst(RegExp(r'/+
     final phoneController = TextEditingController(text: user.phoneNumber ?? '');
     String provider = 'AIRTEL';
     bool requesting = false;
     String? paymentId;
     String message = 'Enter the number linked to your mobile-money wallet.';
 
-    final functions = FirebaseFunctions.instanceFor(region: 'africa-south1');
+    const paymentApiBase = String.fromEnvironment('EDC_PAYMENT_API_URL');
 
     await showDialog<void>(
       context: context,
@@ -475,9 +490,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     message = 'Checking the existing payment request…';
                   });
                   try {
-                    final result = await functions.httpsCallable('refreshMobileMoneyPayment')
-                        .call({'paymentId': paymentId});
-                    final status = result.data['status']?.toString() ?? 'pending';
+                    final result = await _callPaymentApi(paymentApiBase, '/payments/status', {'paymentId': paymentId});
+                    final status = result['status']?.toString() ?? 'pending';
                     if (status == 'approved') {
                       if (dialogContext.mounted) Navigator.pop(dialogContext);
                       if (mounted) {
@@ -515,17 +529,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 });
                 try {
                   final requestId = 'edc_${user.uid}_${DateTime.now().microsecondsSinceEpoch}';
-                  final result = await functions.httpsCallable('requestMobileMoneyPayment')
-                      .call({'provider': provider, 'phone': phone, 'requestId': requestId});
-                  paymentId = result.data['paymentId']?.toString();
+                  final result = await _callPaymentApi(paymentApiBase, '/payments/initiate', {'provider': provider, 'phone': phone, 'requestId': requestId});
+                  paymentId = result['paymentId']?.toString();
                   if (paymentId == null) throw Exception('Payment request reference was not returned.');
                   setDialogState(() => message = 'Request sent once. Approve the K50 prompt on your phone.');
                   for (var attempt = 0; attempt < 12; attempt++) {
                     await Future<void>.delayed(const Duration(seconds: 10));
                     if (!dialogContext.mounted) return;
-                    final statusResult = await functions.httpsCallable('refreshMobileMoneyPayment')
-                        .call({'paymentId': paymentId});
-                    final status = statusResult.data['status']?.toString() ?? 'pending';
+                    final statusResult = await _callPaymentApi(paymentApiBase, '/payments/status', {'paymentId': paymentId});
+                    final status = statusResult['status']?.toString() ?? 'pending';
                     if (status == 'approved') {
                       Navigator.pop(dialogContext);
                       if (mounted) {
@@ -547,10 +559,468 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     requesting = false;
                     message = 'Still pending. Your request was sent only once. Use Check status; do not tap Pay again.';
                   });
-                } on FirebaseFunctionsException catch (error) {
+                } catch (error) {
                   setDialogState(() {
                     requesting = false;
-                    message = error.message ?? 'Payment could not be started. If a prompt arrived, do not retry yet.';
+                    message = 'Payment request could not be confirmed. If a prompt arrived, use Check status and do not pay again.';
+                  });
+                }
+              },
+              child: requesting
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : Text(paymentId == null ? 'Pay K50' : 'Request already sent'),
+            ),
+          ],
+        ),
+      ),
+    );
+    phoneController.dispose();
+  }
+
+  Widget _buildPaymentHistory(List<PaymentModel> payments) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Payment History',
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.darkNavy),
+            ),
+            const SizedBox(height: 12),
+            if (payments.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12.0),
+                child: Text(
+                  'No payment records found.',
+                  style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
+                ),
+              )
+            else
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: payments.length,
+                separatorBuilder: (c, i) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final p = payments[index];
+                  final isApproved = p.status == 'approved';
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      isApproved ? Icons.check_circle : Icons.pending,
+                      color: isApproved
+                          ? AppTheme.successGreen
+                          : Colors.orange,
+                    ),
+                    title: Text(
+                      'K${p.amount.toStringAsFixed(0)} — ${p.paymentReference}',
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: Text(
+                      'Submitted: ${p.submittedAt.toLocal().toString().split(' ')[0]}',
+                      style: const TextStyle(
+                          fontSize: 11, color: AppTheme.textMuted),
+                    ),
+                    trailing: Text(
+                      p.status.toUpperCase(),
+                      style: TextStyle(
+                        color: isApproved
+                            ? AppTheme.successGreen
+                            : Colors.orange,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 11,
+                      ),
+                    ),
+                  );
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAccountActions(UserModel user) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Column(
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(18, 18, 18, 8),
+            child: Row(
+              children: [
+                Icon(Icons.settings, color: AppTheme.primaryBlue),
+                SizedBox(width: 10),
+                Text('Profile Settings', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.darkNavy)),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.edit, color: AppTheme.primaryBlue),
+            title: const Text('Edit Full Name'),
+            onTap: () => _showEditNameDialog(user),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.phone_android, color: AppTheme.primaryBlue),
+            title: const Text('Edit Phone Number'),
+            subtitle: Text(
+              user.phoneNumber?.isNotEmpty == true
+                  ? user.phoneNumber!
+                  : 'Not set',
+              style: const TextStyle(fontSize: 12),
+            ),
+            onTap: () => _showEditPhoneDialog(user),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.school, color: AppTheme.primaryBlue),
+            title: const Text('Edit Programme & Year'),
+            onTap: () => _showEditAcademicDialog(user),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.logout, color: AppTheme.errorRed),
+            title: const Text('Sign Out',
+                style: TextStyle(color: AppTheme.errorRed)),
+            onTap: () async {
+              await _authService.signOut();
+              if (!mounted) return;
+              Navigator.pushNamedAndRemoveUntil(
+                  context, '/login', (route) => false);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── DIALOGS ──
+
+  void _showEditNameDialog(UserModel user) {
+    final controller = TextEditingController(text: user.name);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Update Display Name'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(labelText: 'Full Name'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              final newName = controller.text.trim();
+              if (newName.isNotEmpty) {
+                final updated = user.copyWith(
+                  name: newName,
+                  updatedAt: DateTime.now(),
+                );
+                await _firestoreService.saveUser(updated);
+                _authService.setCurrentUser(updated);
+                setState(() {});
+              }
+              Navigator.pop(ctx);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEditPhoneDialog(UserModel user) {
+    final controller =
+        TextEditingController(text: user.phoneNumber ?? '');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Update Phone Number'),
+        content: TextField(
+          controller: controller,
+          keyboardType: TextInputType.phone,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          decoration: const InputDecoration(
+            labelText: 'Mobile Number',
+            hintText: 'e.g. 0972123456',
+            prefixIcon:
+                Icon(Icons.phone_android, color: AppTheme.primaryBlue),
+            helperText: 'Used for future mobile money payment prompts',
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () async {
+              final phone = controller.text.trim();
+              if (phone.isNotEmpty) {
+                final updated = user.copyWith(
+                  phoneNumber: phone,
+                  updatedAt: DateTime.now(),
+                );
+                await _firestoreService.saveUser(updated);
+                _authService.setCurrentUser(updated);
+                setState(() {});
+              }
+              Navigator.pop(ctx);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEditAcademicDialog(UserModel user) {
+    final yearController = TextEditingController(text: user.year ?? '');
+    final programmeController = TextEditingController(text: user.program ?? '');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Update Academic Details'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: programmeController,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(
+                labelText: 'Programme',
+                hintText: 'e.g. Civil Engineering',
+              ),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: yearController,
+              textCapitalization: TextCapitalization.words,
+              decoration: const InputDecoration(
+                labelText: 'Year of Study',
+                hintText: 'e.g. Year 2',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final programme = programmeController.text.trim();
+              final year = yearController.text.trim();
+              if (programme.isEmpty || year.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Enter both your programme and year of study.'),
+                  ),
+                );
+                return;
+              }
+              final updated = user.copyWith(
+                year: year,
+                program: programme,
+                updatedAt: DateTime.now(),
+              );
+              try {
+                await _firestoreService.saveUser(updated);
+                _authService.setCurrentUser(updated);
+                if (mounted) setState(() {});
+                if (ctx.mounted) Navigator.pop(ctx);
+              } catch (error) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Could not update profile: $error')),
+                );
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+}), '')}$path'),
+      headers: {
+        'Authorization': 'Bearer $idToken',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode(body),
+    ).timeout(const Duration(seconds: 30));
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Payment service returned an invalid response.');
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(decoded['error']?.toString() ?? 'Payment service request failed.');
+    }
+    return decoded;
+  }
+
+  Future<void> _showMobileMoneyPayment(UserModel user) async {
+    final phoneController = TextEditingController(text: user.phoneNumber ?? '');
+    String provider = 'AIRTEL';
+    bool requesting = false;
+    String? paymentId;
+    String message = 'Enter the number linked to your mobile-money wallet.';
+
+    const paymentApiBase = String.fromEnvironment('EDC_PAYMENT_API_URL');
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Pay K50 subscription'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('K50 gives you 30 days of premium access.'),
+                const SizedBox(height: 14),
+                DropdownButtonFormField<String>(
+                  value: provider,
+                  decoration: const InputDecoration(labelText: 'Mobile-money network'),
+                  items: const [
+                    DropdownMenuItem(value: 'AIRTEL', child: Text('Airtel Money')),
+                    DropdownMenuItem(value: 'MTN', child: Text('MTN MoMo')),
+                  ],
+                  onChanged: requesting || paymentId != null ? null : (value) {
+                    if (value != null) setDialogState(() => provider = value);
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: phoneController,
+                  enabled: !requesting && paymentId == null,
+                  keyboardType: TextInputType.phone,
+                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9+() -]'))],
+                  decoration: const InputDecoration(
+                    labelText: 'Mobile-money phone number',
+                    hintText: '0971234567',
+                    prefixIcon: Icon(Icons.phone_android),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryBlue.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Text(
+                    'When you tap Pay, we send one payment request. Approve it on your phone using your wallet PIN. Never type your PIN or OTP into this app.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(message, style: const TextStyle(fontSize: 12, color: AppTheme.textMuted)),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Close'),
+            ),
+            if (paymentId != null && !requesting)
+              TextButton(
+                onPressed: () async {
+                  setDialogState(() {
+                    requesting = true;
+                    message = 'Checking the existing payment request…';
+                  });
+                  try {
+                    final result = await _callPaymentApi(paymentApiBase, '/payments/status', {'paymentId': paymentId});
+                    final status = result['status']?.toString() ?? 'pending';
+                    if (status == 'approved') {
+                      if (dialogContext.mounted) Navigator.pop(dialogContext);
+                      if (mounted) {
+                        ScaffoldMessenger.of(this.context).showSnackBar(
+                          const SnackBar(content: Text('Payment confirmed. Premium access is active!')),
+                        );
+                      }
+                    } else {
+                      setDialogState(() {
+                        requesting = false;
+                        message = status == 'rejected'
+                            ? 'Payment was not completed. Start a new payment only after confirming no debit occurred.'
+                            : 'Still waiting for your wallet approval. Do not tap Pay again.';
+                      });
+                    }
+                  } catch (_) {
+                    setDialogState(() {
+                      requesting = false;
+                      message = 'Could not check status right now. Your existing request is saved; do not pay again.';
+                    });
+                  }
+                },
+                child: const Text('Check status'),
+              ),
+            ElevatedButton(
+              onPressed: requesting || paymentId != null ? null : () async {
+                final phone = phoneController.text.trim();
+                if (phone.isEmpty) {
+                  setDialogState(() => message = 'Enter your mobile-money number first.');
+                  return;
+                }
+                setDialogState(() {
+                  requesting = true;
+                  message = 'Sending one payment request to your phone…';
+                });
+                try {
+                  final requestId = 'edc_${user.uid}_${DateTime.now().microsecondsSinceEpoch}';
+                  final result = await _callPaymentApi(paymentApiBase, '/payments/initiate', {'provider': provider, 'phone': phone, 'requestId': requestId});
+                  paymentId = result['paymentId']?.toString();
+                  if (paymentId == null) throw Exception('Payment request reference was not returned.');
+                  setDialogState(() => message = 'Request sent once. Approve the K50 prompt on your phone.');
+                  for (var attempt = 0; attempt < 12; attempt++) {
+                    await Future<void>.delayed(const Duration(seconds: 10));
+                    if (!dialogContext.mounted) return;
+                    final statusResult = await _callPaymentApi(paymentApiBase, '/payments/status', {'paymentId': paymentId});
+                    final status = statusResult['status']?.toString() ?? 'pending';
+                    if (status == 'approved') {
+                      Navigator.pop(dialogContext);
+                      if (mounted) {
+                        ScaffoldMessenger.of(this.context).showSnackBar(
+                          const SnackBar(content: Text('Payment confirmed. Premium access is active!')),
+                        );
+                      }
+                      return;
+                    }
+                    if (status == 'rejected') {
+                      setDialogState(() {
+                        requesting = false;
+                        message = 'Payment was declined or expired. Check your wallet before starting another payment.';
+                      });
+                      return;
+                    }
+                  }
+                  setDialogState(() {
+                    requesting = false;
+                    message = 'Still pending. Your request was sent only once. Use Check status; do not tap Pay again.';
                   });
                 } catch (error) {
                   setDialogState(() {
