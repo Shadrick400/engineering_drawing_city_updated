@@ -377,10 +377,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Secure mobile money checkout is being configured. '
-                'Payments are not being collected yet. Your account will unlock '
-                'premium materials after a successful payment is verified.',
+                'Pay using Airtel Money or MTN MoMo. After sending payment, '
+                'submit the transaction ID for administrator verification. '
+                'Premium access activates only after verification.',
                 style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () => _showMobileMoneyPayment(user),
+                  icon: const Icon(Icons.account_balance_wallet_outlined),
+                  label: const Text('Pay subscription — K50'),
+                ),
               ),
             ],
           ],
@@ -390,7 +399,139 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
 
-  Widget _buildPaymentHistory(List<PaymentModel> payments) {
+    Future<void> _showMobileMoneyPayment(UserModel user) async {
+    const airtelNumber = '0969262568';
+    const mtnNumber = '0777365872';
+    String provider = 'Airtel Money';
+    final referenceController = TextEditingController();
+    bool submitting = false;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Mobile Money Payment'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Subscription fee: K50 for 30 days'),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: provider,
+                  decoration: const InputDecoration(labelText: 'Payment network'),
+                  items: const [
+                    DropdownMenuItem(value: 'Airtel Money', child: Text('Airtel Money')),
+                    DropdownMenuItem(value: 'MTN MoMo', child: Text('MTN MoMo')),
+                  ],
+                  onChanged: submitting ? null : (value) {
+                    if (value != null) setDialogState(() => provider = value);
+                  },
+                ),
+                const SizedBox(height: 12),
+                const Text('Send K50 to this number using your mobile money menu:'),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryBlue.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(child: Text(
+                        provider == 'Airtel Money' ? airtelNumber : mtnNumber,
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      )),
+                      IconButton(
+                        tooltip: 'Copy number',
+                        icon: const Icon(Icons.copy),
+                        onPressed: () async {
+                          final number = provider == 'Airtel Money' ? airtelNumber : mtnNumber;
+                          await Clipboard.setData(ClipboardData(text: number));
+                          if (dialogContext.mounted) {
+                            ScaffoldMessenger.of(dialogContext).showSnackBar(
+                              const SnackBar(content: Text('Payment number copied')),
+                            );
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text('After transfer, enter the transaction ID from your confirmation message.'),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: referenceController,
+                  enabled: !submitting,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: const InputDecoration(
+                    labelText: 'Mobile Money transaction ID',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text('Payment stays pending until verified. Never enter your PIN or OTP.',
+                    style: TextStyle(fontSize: 11, color: AppTheme.textMuted)),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: submitting ? null : () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: submitting ? null : () async {
+                final transactionId = referenceController.text.trim();
+                if (transactionId.length < 4) {
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    const SnackBar(content: Text('Enter the transaction ID from your confirmation.')),
+                  );
+                  return;
+                }
+                setDialogState(() => submitting = true);
+                try {
+                  final payment = PaymentModel(
+                    id: 'pay_${user.uid}_${DateTime.now().microsecondsSinceEpoch}',
+                    userId: user.uid,
+                    amount: 50.0,
+                    paymentReference: '$provider: $transactionId',
+                    status: 'pending',
+                    submittedAt: DateTime.now(),
+                  );
+                  await _firestoreService.savePayment(payment);
+                  if (!dialogContext.mounted) return;
+                  Navigator.pop(dialogContext);
+                  if (mounted) {
+                    ScaffoldMessenger.of(this.context).showSnackBar(
+                      const SnackBar(content: Text('Payment submitted for verification.')),
+                    );
+                    setState(() {});
+                  }
+                } catch (error) {
+                  setDialogState(() => submitting = false);
+                  if (dialogContext.mounted) {
+                    ScaffoldMessenger.of(dialogContext).showSnackBar(
+                      SnackBar(content: Text('Could not submit payment: $error')),
+                    );
+                  }
+                }
+              },
+              child: submitting
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Text('I have paid'),
+            ),
+          ],
+        ),
+      ),
+    );
+    referenceController.dispose();
+  }
+
+Widget _buildPaymentHistory(List<PaymentModel> payments) {
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
